@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 探索期中间产物（只保留 out/ref/ 下的关键产物）
+out/*
+!out/ref/
+!out/ref/**
+
+# 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
+runtime/
+
+# Multisim 安装目录缓存
+samples/*.ewsnip
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统
+Thumbs.db
+desktop.ini
+probe_template.ms14 (Security copy)

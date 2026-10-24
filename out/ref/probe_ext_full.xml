@@ -1,0 +1,84 @@
+<Item ID="237472448" Class="CIITProbeExtComponent">
+<CIITProbeExtComponent Class="CIITProbeExtComponent" instID="0" Stretchable="1" Moveable="1" LabelSelectable="1" Selectable="1" LockedPenColor="0" LockedBrushColor="0" Layer="24" PenColor="0" FgColor="0" BgColor="11862015" Transformer-M00="1" Transformer-M01="0" Transformer-M10="0" Transformer-M11="1" Transformer-M20="558" Transformer-M21="333" Hidden="0" UniqueID="1" Direction_perfer_H="3" Direction_perfer_V="5" Direction="0" Direction_original="0" Direction_latest="3" Position="1" InfoBoxText="&amp;ASC V: --  V(p-p): --  V(rms): --  V(dc): --  V(freq): -- " ShowInfo="1" AutoResize="1" InfoBoxOffsetX="6" InfoBoxOffsetY="40" FileDataPackageID="&amp;ASCX_e278ac0" Font-Height="-9" Font-Width="0" Font-Escapement="0" Font-Orientation="0" Font-Weight="400" Font-Italic="0" Font-Underline="0" Font-StrikeOut="0" Font-CharSet="0" Font-OutPrecision="0" Font-ClipPrecision="0" Font-Quality="0" Font-PitchAndFamily="0" Font-FaceName="&amp;ASCArial" CiProbeExtComp="234011048">
+<DefaultInstrumentProperties>
+<CDataElementMap Class="CDataElementMap">
+<MapData>
+<Element Key="&amp;ASCNI_EWB_SHOW_WINDOW_STATUS">
+<CDataElement Class="CDataElement" Type="2" Data="0" />
+</Element>
+<Element Key="&amp;ASCNI_EWB_DIALOG_STATUS">
+<CDataElement Class="CDataElement" Type="4" Data="0">
+<Elements>
+<CDataElement Class="CDataElement" Type="1" Data="2147483647" />
+<CDataElement Class="CDataElement" Type="1" Data="2147483647" />
+<CDataElement Class="CDataElement" Type="1" Data="0" />
+<CDataElement Class="CDataElement" Type="1" Data="0" />
+</Elements>
+</CDataElement>
+</Element>
+<Element Key="&amp;ASCNI_EWB_SIMULATION_ALLOW">
+<CDataElement Class="CDataElement" Type="2" Data="1" />
+</Element>
+<Element Key="&amp;ASCNI_EWB_DATABASEDATA_EXT">
+<CDataElement Class="CDataElement" Type="5" Data="&amp;ASCV2.0[]_22[]_ V[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(p-p)[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(dc)[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(rms)[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(freq)[]]_1[]]_1[]]_1.000000e-03[]]_1.000000e+12[]]_3[]_ V(period)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(p-p)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(dc)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(rms)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(freq)[]]_0[]]_0[]]_1.000000e-03[]]_1.000000e+12[]]_3[]_ I(period)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(gain_DC)[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(gain_AC)[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ V(phase)[]]_1[]]_1[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(gain_DC)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(gain_AC)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ I(phase)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ P[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ P(avg)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_ D[]]_0[]]_0[]]_2.500000e+00[]]_2.500000e+00[]]_0[]_ D(freq)[]]_0[]]_0[]]_1.000000e-12[]]_1.000000e+12[]]_3[]_1[]_1[]_0[]_0[]_0[]_0[]_" />
+</Element>
+<Element Key="&amp;ASCNI_EWB_COMPHANDLE_EXT">
+<CDataElement Class="CDataElement" Type="1" Data="237472448" />
+</Element>
+<Element Key="&amp;ASCIgnorAnalysisSettingDataFlag">
+<CDataElement Class="CDataElement" Type="2" Data="4294967295" />
+</Element>
+<Element Key="&amp;ASCAnalysisSettingDataFlag_DefaultInUnselected">
+<CDataElement Class="CDataElement" Type="2" Data="0" />
+</Element>
+<Element Key="&amp;ASCInfoBoxSizeX">
+<CDataElement Class="CDataElement" Type="1" Data="98" />
+</Element>
+<Element Key="&amp;ASCInfoBoxSizeY">
+<CDataElement Class="CDataElement" Type="1" Data="76" />
+</Element>
+<Element Key="&amp;ASCNI_EWB_REALTED_ANALYSIS_DATA">
+<CDataElement Class="CDataElement" Type="5" Data="&amp;ASC65536[]_65537[]_65538[]_65539[]_4[]_65541[]_65542[]_65543[]_65544[]_9[]_10[]_11[]_65548[]_65549[]_14[]_15[]_16[]_17[]_18[]_19[]_20[]_21[]_65558[]_" />
+</Element>
+</MapData>
+</CDataElementMap>
+</DefaultInstrumentProperties>
+</CIITProbeExtComponent>
+</Item>
+
+
+<Item CiID="234011048" Class="CiProbeExtComp">
+<CiProbeExtComp Class="CiProbeExtComp" LocalName="&amp;UNI_uc263a294881" SymCompID="237472448" InstanceID="{52C703E0-D6B1-4396-8069-ABFDF1756258}" Circuit="233092544">
+<Attributes>
+<Item />
+<Item />
+<Item />
+<Item />
+<Item>
+<CiaCollString Class="CiaCollString">
+<strings>
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+</strings>
+</CiaCollString>
+</Item>
+<Item>
+<CiaCollString Class="CiaCollString">
+<strings>
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+<Item Value="" />
+<Item Value="&amp;UNI_uc263a29488%d" />
+</strings>
+</CiaCollString>
+</Item>
+</Attributes>
+<Ports />
+</CiProbeExtComp>
+</Item>
