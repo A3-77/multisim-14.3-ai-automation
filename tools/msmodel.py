@@ -42,6 +42,23 @@ def _txt(v, default=""):
     return v if v else default
 
 
+def _flt(s, default=0.0):
+    """宽容的浮点解析。
+
+    官方样例里坐标写法不统一：既有 "455." 也有 "455.369."（双尾点，来自高精度存盘），
+    直接 float() 会抛 ValueError。这里先原样试，再剥掉尾部多余的点。
+    """
+    if s is None:
+        return default
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        try:
+            return float(str(s).strip().rstrip("."))
+        except (TypeError, ValueError):
+            return default
+
+
 # 工程记数法前缀（10^3 一档），与 Multisim 的显示规则一致
 _PREFIX = [
     (-12, "p"), (-9, "n"), (-6, "u"), (-3, "m"), (0, ""),
@@ -276,8 +293,8 @@ class Circuit:
         for el in item.iter():
             x, y = el.get("Transformer-M20"), el.get("Transformer-M21")
             if x is not None and y is not None:
-                el.set("Transformer-M20", "%g." % (float(x) + dx))
-                el.set("Transformer-M21", "%g." % (float(y) + dy))
+                el.set("Transformer-M20", "%g." % (_flt(x) + dx))
+                el.set("Transformer-M21", "%g." % (_flt(y) + dy))
         return True
 
     def position(self, ciid):
@@ -287,7 +304,7 @@ class Circuit:
         for el in item.iter():
             x, y = el.get("Transformer-M20"), el.get("Transformer-M21")
             if x is not None and y is not None:
-                return float(x), float(y)
+                return _flt(x), _flt(y)
         return None
 
     def set_refdes(self, ciid, refdes):
@@ -356,8 +373,8 @@ class Circuit:
         for it in rc:
             inner = list(it)
             if inner and inner[0].get("Class") == "CODPinComp":
-                out[it.get("ID")] = (float(inner[0].get("CenterX")),
-                                     float(inner[0].get("CenterY")))
+                out[it.get("ID")] = (_flt(inner[0].get("CenterX")),
+                                     _flt(inner[0].get("CenterY")))
         return out
 
     def pin_info(self, ciid):

@@ -1,8 +1,24 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
-> **一句话结论：我们已经做到"从空白电路开始，用代码生成一个能被 Multisim 正常打开、正常渲染、
-> 参数正确的电路文件（`.ms14`）"，并且能驱动 Multisim 的 GUI 放上电压探针。
-> 剩下的最后一公里是"把探针也纯代码生成"和"跑仿真验证读数"，路线已经探明。**
+> ## ✅ v0.1.0-p0-pass（2026-10-24）：P0 验收通过
+>
+> **从空白 Multisim 14.3 电路出发，引擎用纯代码生成 V1(5V) + R1(1kΩ) + C1(1pF) + GND + 电压探针，
+> Multisim 能正常打开并真实仿真；COM 读到 `V(探针1)` 的 100 个采样点，恒为 `5.0 V`，
+> `RLCValue('R1') = 1000.0 Ω` → I = 5 mA。**
+>
+> 验证记录：[`docs/p0-acceptance.md`](docs/p0-acceptance.md) ·
+> 电路：[`out/ref/acceptance.ms14`](out/ref/acceptance.ms14) ·
+> 波形：[`out/ref/p0_waveform.csv`](out/ref/p0_waveform.csv) ·
+> JSON：[`out/ref/p11_final.json`](out/ref/p11_final.json)
+>
+> 关键修复：`msbuild.Assembler.add()` 克隆元件时漏了 `CIITPinSymbolComp@PortID` 重映射，
+> 导致引脚符号与电气端口脱钩——元件/参数/导线全对，但仿真秒停。修复后整条链路才真正打通。
+>
+> ---
+>
+> **一句话结论（更新）：已经能做到"从空白电路开始，用代码生成一个能被 Multisim 打开、
+> 并且能真实仿真、能通过 COM 读到正确读数的电路文件（`.ms14`）"。**
+> 下一步是工程化与泛化：统一元件 API → RC 低通 → 元件覆盖率 → Circuit IR → 自然语言。
 
 本仓库是完整的过程记录 + 可运行代码 + ground truth 语料库，供后续 agent 接手继续研究。
 
