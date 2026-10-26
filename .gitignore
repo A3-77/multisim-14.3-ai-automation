@@ -46,6 +46,12 @@ out/mcp/*.log
 !out/agent_test/*.log
 out/agent_test/*.png
 out/agent_test/*.ms14
+# 第二次验收（二阶 / 多节点）
+!out/agent_test2/
+!out/agent_test2/*.py
+!out/agent_test2/*.json
+!out/agent_test2/*.md
+!out/agent_test2/*.log
 
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/

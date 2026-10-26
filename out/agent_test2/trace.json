@@ -1,0 +1,187 @@
+{
+  "design": {
+    "R": 10000.0,
+    "C": 8.2e-09,
+    "fc": 1940.913940145065,
+    "f": 1000.0,
+    "gain_theory": 0.5843423285364553,
+    "phase_theory": -64.5814879940509,
+    "vout_theory": 0.5843423285364553
+  },
+  "circuit_id": "c-c35595c4c1",
+  "steps": 17,
+  "snapshot": {
+    "circuit_id": "c-c35595c4c1",
+    "name": "agent2_2nd_order_lpf",
+    "components": [
+      {
+        "refdes": "V1",
+        "family": "SIGNAL_VOLTAGE_SOURCES",
+        "part": "AC_VOLTAGE",
+        "value": 1.0,
+        "value_name": "amplitude",
+        "value_unit": "V",
+        "parameters": {
+          "frequency": 1000.0
+        },
+        "pins": [
+          "1",
+          "2"
+        ],
+        "aliases": {
+          "+": "1",
+          "-": "2"
+        }
+      },
+      {
+        "refdes": "R1",
+        "family": "RESISTOR",
+        "part": "RESISTOR_VIRTUAL",
+        "value": 10000.0,
+        "value_name": "resistance",
+        "value_unit": "ohm",
+        "parameters": {},
+        "pins": [
+          "1",
+          "2"
+        ],
+        "aliases": {}
+      },
+      {
+        "refdes": "C1",
+        "family": "CAPACITOR",
+        "part": "CAPACITOR_VIRTUAL",
+        "value": 8.2e-09,
+        "value_name": "capacitance",
+        "value_unit": "F",
+        "parameters": {},
+        "pins": [
+          "1",
+          "2"
+        ],
+        "aliases": {}
+      },
+      {
+        "refdes": "R2",
+        "family": "RESISTOR",
+        "part": "RESISTOR_VIRTUAL",
+        "value": 10000.0,
+        "value_name": "resistance",
+        "value_unit": "ohm",
+        "parameters": {},
+        "pins": [
+          "1",
+          "2"
+        ],
+        "aliases": {}
+      },
+      {
+        "refdes": "C2",
+        "family": "CAPACITOR",
+        "part": "CAPACITOR_VIRTUAL",
+        "value": 8.2e-09,
+        "value_name": "capacitance",
+        "value_unit": "F",
+        "parameters": {},
+        "pins": [
+          "1",
+          "2"
+        ],
+        "aliases": {}
+      },
+      {
+        "refdes": "GND1",
+        "family": "POWER_SOURCES",
+        "part": "GROUND",
+        "value": null,
+        "value_name": null,
+        "value_unit": null,
+        "parameters": {},
+        "pins": [
+          "1"
+        ],
+        "aliases": {}
+      }
+    ],
+    "nets": [
+      {
+        "name": "in",
+        "pins": [
+          "V1.1",
+          "R1.1"
+        ]
+      },
+      {
+        "name": "n1",
+        "pins": [
+          "R1.2",
+          "C1.1",
+          "R2.1"
+        ]
+      },
+      {
+        "name": "n2",
+        "pins": [
+          "R2.2",
+          "C2.1"
+        ]
+      },
+      {
+        "name": "0",
+        "pins": [
+          "C1.2",
+          "C2.2",
+          "V1.2",
+          "GND1.1"
+        ]
+      }
+    ],
+    "probes": [
+      {
+        "probe_id": "P1",
+        "label": null,
+        "output": null,
+        "net": "in",
+        "kind": "V"
+      },
+      {
+        "probe_id": "P2",
+        "label": null,
+        "output": null,
+        "net": "n2",
+        "kind": "V"
+      }
+    ],
+    "simulation": {
+      "analysis": "transient",
+      "start": 0.0,
+      "stop": 0.0,
+      "sample_rate": 200000.0
+    },
+    "simulations": [],
+    "counts": {
+      "components": 6,
+      "nets": 4,
+      "probes": 2
+    },
+    "warnings": [],
+    "ok": true
+  },
+  "simulate_ok": false,
+  "simulate_error": {
+    "ok": false,
+    "error": {
+      "code": "LAYOUT_UNSUPPORTED",
+      "message": "网络 'n1' 有 2 个分支（C1.1, R2.1）",
+      "hint": "第一版只支持串联链；并联 / 多支路的布局还没验证过。",
+      "context": {
+        "net": "n1",
+        "branches": [
+          "C1.1",
+          "R2.1"
+        ]
+      }
+    }
+  },
+  "sim": null
+}
