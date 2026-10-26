@@ -1,0 +1,165 @@
+[
+  {
+    "label": "get_waveform 的 probe 传 COM 输出名（schema 字面意思）",
+    "tool": "get_waveform",
+    "args": {
+      "sim_id": "s-042f992be7",
+      "probe": "V(探针1)"
+    },
+    "ok": false,
+    "error": {
+      "code": "PROBE_NOT_FOUND",
+      "message": "没有探针 'V(探针1)'",
+      "hint": "可用探针：['P1', 'P2']"
+    }
+  },
+  {
+    "label": "get_waveform 的 probe 传探针名",
+    "tool": "get_waveform",
+    "args": {
+      "sim_id": "s-042f992be7",
+      "probe": "P1"
+    },
+    "ok": true,
+    "error": null
+  },
+  {
+    "label": "measure 的 probe 传 COM 输出名",
+    "tool": "measure",
+    "args": {
+      "sim_id": "s-042f992be7",
+      "probe": "V(探针1)"
+    },
+    "ok": false,
+    "error": {
+      "code": "PROBE_NOT_FOUND",
+      "message": "没有任何可用通道（probe='V(探针1)'）",
+      "hint": "可用探针：['P1', 'P2']",
+      "context": {
+        "available": [
+          "P1",
+          "P2"
+        ]
+      }
+    }
+  },
+  {
+    "label": "measure 的 probe 传探针名",
+    "tool": "measure",
+    "args": {
+      "sim_id": "s-042f992be7",
+      "probe": "P1"
+    },
+    "ok": true,
+    "error": null
+  },
+  {
+    "label": "忘了接地就 simulate",
+    "tool": "simulate",
+    "args": {
+      "circuit_id": "c-4e6fef28de"
+    },
+    "ok": false,
+    "error": {
+      "code": "NO_GROUND",
+      "message": "电路里没有接地元件",
+      "hint": "加一个 POWER_SOURCES/GROUND，并把回路接上去。"
+    }
+  },
+  {
+    "label": "引脚名写错（V1.3）",
+    "tool": "connect",
+    "args": {
+      "circuit_id": "c-eccf480d70",
+      "pins": [
+        [
+          "V1",
+          "3"
+        ],
+        [
+          "R1",
+          "1"
+        ]
+      ]
+    },
+    "ok": false,
+    "error": {
+      "code": "PIN_NOT_FOUND",
+      "message": "V1（SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE）没有引脚 '3'",
+      "hint": "可用引脚：{'pins': ['1', '2'], 'aliases': {'+': '1', '-': '2'}}",
+      "context": {
+        "refdes": "V1",
+        "pin": "3",
+        "available": {
+          "pins": [
+            "1",
+            "2"
+          ],
+          "aliases": {
+            "+": "1",
+            "-": "2"
+          }
+        }
+      }
+    }
+  },
+  {
+    "label": "circuit_id 记错",
+    "tool": "simulate",
+    "args": {
+      "circuit_id": "c-0000000000"
+    },
+    "ok": false,
+    "error": {
+      "code": "CIRCUIT_NOT_FOUND",
+      "message": "找不到电路会话 'c-0000000000'",
+      "hint": "先用 create_circuit 建一个。",
+      "context": {
+        "circuit_id": "c-0000000000"
+      }
+    }
+  },
+  {
+    "label": "sim_id 记错",
+    "tool": "measure",
+    "args": {
+      "sim_id": "s-0000000000"
+    },
+    "ok": false,
+    "error": {
+      "code": "SIM_NOT_FOUND",
+      "message": "找不到仿真 's-0000000000'",
+      "hint": "simulate 的结果只在 out/mcp/sessions 下；换一个 sim_id。"
+    }
+  },
+  {
+    "label": "想知道已建电路当前长什么样（没有 get_circuit）",
+    "tool": "get_circuit",
+    "args": {
+      "circuit_id": "c-eccf480d70"
+    },
+    "ok": false,
+    "error": {
+      "code": "UNKNOWN_TOOL",
+      "message": "没有这个工具：'get_circuit'",
+      "hint": "可用：create_circuit, add_component, connect, add_probe, simulate, measure, get_waveform"
+    }
+  },
+  {
+    "label": "串联链 3 个无源元件",
+    "tool": "simulate",
+    "args": {
+      "circuit_id": "c-f01827d9e7"
+    },
+    "ok": false,
+    "error": {
+      "code": "LAYOUT_UNSUPPORTED",
+      "message": "串联链上有 3 个元件，超过已验证上限 2 个",
+      "hint": "布局只实测过 1~2 个无源元件的坐标组合。",
+      "context": {
+        "count": 3,
+        "limit": 2
+      }
+    }
+  }
+]

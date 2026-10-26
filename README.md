@@ -605,6 +605,37 @@ measure()                                                   -> 增益 0.706316 /
 
 工具表、错误码全表、自动布局规则见 [docs/mcp.md](docs/mcp.md)。
 
+### 3.9 Agent Acceptance Test：外部 Agent 自己设计电路（v0.6.1）
+
+MCP 建好之后，做了一次**不看源码的验收**：一个只读过 `tools/list`、
+不知道 Multisim 任何内部概念的外部 Agent，拿到一句需求：
+
+> 创建一个 1V、1kHz 的正弦输入，设计一个截止频率约为 500Hz 的一阶 RC 低通滤波器。
+> 请自行选择合适的电阻和电容值，创建 Multisim 电路，进行瞬态仿真，
+> 并告诉我输出端的实际幅值、理论幅值以及误差。
+
+它自己选了 R=10 kΩ / C=33 nF（E12 标准值，fc=482.3 Hz），
+**13 次工具调用零错误一次通过**，仿真 29.7 s 后报出：
+
+| 项 | 实测 | 理论 | 误差 |
+| --- | --- | --- | --- |
+| 输出幅值 | 0.431897 V | 0.434405 V | **−0.577 %** |
+| 增益 | 0.433288 | 0.434405 | −0.257 % |
+| 相位 | −64.327° | −64.253° | **−0.074°** |
+
+并且它用纯标准库自己写最小二乘，从原始 1200 点 CSV 复算出同一个增益 ——
+证明 `measure` 不是在编数。
+
+![电路](docs/case/agent_rc_500hz_circuit.png)
+
+完整案例（题目、截图、13 次调用轨迹、8 个 API 问题）见
+[docs/case/agent-acceptance-rc-500hz.md](docs/case/agent-acceptance-rc-500hz.md)，
+逐项报告见 [out/agent_test/AGENT_ACCEPTANCE_REPORT.md](out/agent_test/AGENT_ACCEPTANCE_REPORT.md)。
+
+> 顺带暴露了一个真问题：Multisim 的 `GetCircuitImage` 对我们生成的 `.ms14`
+> **画不出 V1/C1 符号**（自带样例正常，让 Multisim 自己另存再打开也一样）。
+> 不影响仿真，但影响"给人看"，已记为待修项。
+
 ---
 
 ## 四、环境依赖
@@ -672,6 +703,7 @@ multisim-ctrl/
 │   ├── mcp.md                 MCP Tool API：工具表 / 错误码 / 自动布局
 │   ├── next-steps.md          路线图
 │   ├── api.md                 COM API 全表（旧路线留存）
+│   ├── case/                  ★ Agent Acceptance Test 案例（题目 + 电路图 + 波形图）
 │   └── shots/                 关键截图（8 张，按时间顺序）
 ├── examples/
 │   ├── rc_lowpass.ir.json     ★ Circuit IR 示例（RC 低通的完整描述）
@@ -716,6 +748,7 @@ multisim-ctrl/
 │   ├── samples/*.xml.gz       108 个官方样例解压后的明文 XML（gzip，共 7.4 MB）
 │   ├── samples14/*.ms14       ★ 10 个原生 Multisim 14.3 电路（含 555 / 运放 / buck）
 │   └── samples_index.json     每个样例的元件清单 (refdes, family, part)
+├── out/agent_test/            ★ Agent Acceptance Test 的全部证据（脚本/轨迹/报告）
 ├── out/ref/
 │   ├── blank_circuit.xml      空白电路明文（148367 B，注入基底）
 │   ├── own_blank.ms14         用自研压缩器重打包的空白电路（Multisim 能打开）

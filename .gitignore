@@ -38,6 +38,15 @@ out/dc/*.ms14
 out/mcp/sessions/
 out/mcp/*.log
 
+# Agent Acceptance Test 的证据（docs/case/ 与报告直接引用）
+!out/agent_test/
+!out/agent_test/*.py
+!out/agent_test/*.json
+!out/agent_test/*.md
+!out/agent_test/*.log
+out/agent_test/*.png
+out/agent_test/*.ms14
+
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/
 

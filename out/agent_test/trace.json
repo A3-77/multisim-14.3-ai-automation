@@ -1,0 +1,425 @@
+{
+  "design": {
+    "R": 10000.0,
+    "C": 3.3e-08,
+    "fc": 482.2877063390768,
+    "f_in": 1000.0,
+    "v_in": 1.0,
+    "gain_theory": 0.4344050425199362,
+    "phase_theory": -64.25255814682893,
+    "vout_theory": 0.4344050425199362,
+    "fc_target": 500.0
+  },
+  "circuit_id": "c-eccf480d70",
+  "sim_id": "s-042f992be7",
+  "outputs": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "measure": {
+    "ok": true,
+    "sim_id": "s-042f992be7",
+    "analysis": "transient",
+    "what": "all",
+    "channels": {
+      "P1": {
+        "net": "in",
+        "output": "V(探针1)",
+        "n": 1200,
+        "min": -0.997630139,
+        "max": 0.997630139,
+        "mean": 1.8892334932609928e-06,
+        "rms": 0.7048384904154249,
+        "amp": 0.9967910964072849,
+        "phase_deg": -2.4116360240706393e-05,
+        "offset": 5.264703831884793e-07
+      },
+      "P2": {
+        "net": "n1",
+        "output": "V(探针2)",
+        "n": 1200,
+        "min": -0.43301836,
+        "max": 0.541899952,
+        "mean": 0.021640512538975,
+        "rms": 0.3120670446660801,
+        "amp": 0.43189714971364834,
+        "phase_deg": -64.32671892829833,
+        "offset": 2.1999886213050414e-05
+      }
+    },
+    "notes": [],
+    "mode": "ratio",
+    "gain": 0.4332875276176994,
+    "in_probe": "P1",
+    "out_probe": "P2",
+    "phase_deg": -64.3266948119381,
+    "source_amp": 1.0,
+    "source_freq": 1000.0,
+    "theory": {
+      "kind": "rc_lowpass",
+      "gain": 0.4344050425199362,
+      "phase_deg": -64.25255814682893,
+      "fc": 482.2877063390768,
+      "r": 10000.0,
+      "c": 3.3e-08,
+      "freq": 1000.0
+    }
+  },
+  "waveform_artifact": "out\\mcp\\sessions\\c-eccf480d70\\sims\\s-042f992be7.csv",
+  "trace": [
+    {
+      "step": 1,
+      "tool": "create_circuit",
+      "args": {
+        "name": "agent_rc_500hz"
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.0
+    },
+    {
+      "step": 2,
+      "tool": "add_component",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "family": "SIGNAL_VOLTAGE_SOURCES",
+        "part": "AC_VOLTAGE",
+        "refdes": "V1",
+        "value": 1.0,
+        "frequency": 1000.0
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.02
+    },
+    {
+      "step": 3,
+      "tool": "add_component",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "family": "RESISTOR",
+        "part": "RESISTOR_VIRTUAL",
+        "refdes": "R1",
+        "value": 10000.0
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 4,
+      "tool": "add_component",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "family": "CAPACITOR",
+        "part": "CAPACITOR_VIRTUAL",
+        "refdes": "C1",
+        "value": 3.3e-08
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 5,
+      "tool": "add_component",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "family": "POWER_SOURCES",
+        "part": "GROUND",
+        "refdes": "GND1"
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 6,
+      "tool": "connect",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "pins": [
+          [
+            "V1",
+            "+"
+          ],
+          [
+            "R1",
+            "1"
+          ]
+        ]
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 7,
+      "tool": "connect",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "pins": [
+          [
+            "R1",
+            "2"
+          ],
+          [
+            "C1",
+            "1"
+          ]
+        ]
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.0
+    },
+    {
+      "step": 8,
+      "tool": "connect",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "pins": [
+          [
+            "C1",
+            "2"
+          ],
+          [
+            "V1",
+            "-"
+          ],
+          [
+            "GND1",
+            "1"
+          ]
+        ]
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 9,
+      "tool": "add_probe",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "target": "in"
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 10,
+      "tool": "add_probe",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "target": "R1.2"
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.01
+    },
+    {
+      "step": 11,
+      "tool": "simulate",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "analysis": "transient"
+      },
+      "ok": true,
+      "error": null,
+      "ms": 25.32
+    },
+    {
+      "step": 12,
+      "tool": "measure",
+      "args": {
+        "sim_id": "s-042f992be7"
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.02
+    },
+    {
+      "step": 13,
+      "tool": "get_waveform",
+      "args": {
+        "sim_id": "s-042f992be7",
+        "max_points": 20
+      },
+      "ok": true,
+      "error": null,
+      "ms": 0.0
+    },
+    {
+      "step": 14,
+      "tool": "add_component",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "family": "INDUCTOR",
+        "part": "INDUCTOR_VIRTUAL",
+        "refdes": "L1",
+        "value": 0.001
+      },
+      "ok": false,
+      "error": {
+        "code": "UNKNOWN_COMPONENT_TYPE",
+        "message": "元件类型 INDUCTOR/INDUCTOR_VIRTUAL 不在已验证白名单里",
+        "hint": "第一版只开放这些：SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE, POWER_SOURCES/DC_POWER, RESISTOR/RESISTOR_VIRTUAL, CAPACITOR/CAPACITOR_VIRTUAL, POWER_SOURCES/GROUND",
+        "context": {
+          "family": "INDUCTOR",
+          "part": "INDUCTOR_VIRTUAL",
+          "supported": [
+            "SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE",
+            "POWER_SOURCES/DC_POWER",
+            "RESISTOR/RESISTOR_VIRTUAL",
+            "CAPACITOR/CAPACITOR_VIRTUAL",
+            "POWER_SOURCES/GROUND"
+          ]
+        }
+      },
+      "ms": 0.01
+    },
+    {
+      "step": 15,
+      "tool": "simulate",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "analysis": "dc"
+      },
+      "ok": false,
+      "error": {
+        "code": "ANALYSIS_NOT_SUPPORTED",
+        "message": "AC_VOLTAGE 不支持 dc（当前后端只验证过 transient）",
+        "hint": "把 analysis 改成 'transient'，或者把源换成支持 'dc' 的类型。",
+        "context": {
+          "analysis": "dc",
+          "source_part": "AC_VOLTAGE",
+          "source_refdes": "V1",
+          "supported": [
+            "transient"
+          ]
+        }
+      },
+      "ms": 0.0
+    },
+    {
+      "step": 16,
+      "tool": "add_probe",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "target": "R1"
+      },
+      "ok": false,
+      "error": {
+        "code": "AMBIGUOUS_TARGET",
+        "message": "'R1' 是一个元件，它有两个引脚，探针该放哪个？",
+        "hint": "改用网络名，或写成 'R1.1' / 'R1.2'。",
+        "context": {
+          "refdes": "R1",
+          "pins": {
+            "pins": [
+              "1",
+              "2"
+            ],
+            "aliases": {}
+          }
+        }
+      },
+      "ms": 0.0
+    },
+    {
+      "step": 17,
+      "tool": "add_component",
+      "args": {
+        "circuit_id": "c-eccf480d70",
+        "family": "SIGNAL_VOLTAGE_SOURCES",
+        "part": "AC_VOLTAGE",
+        "refdes": "V9",
+        "value": 1.0
+      },
+      "ok": false,
+      "error": {
+        "code": "MISSING_PARAMETER",
+        "message": "AC_VOLTAGE 需要 frequency（单位 Hz）",
+        "hint": "add_component 里传 frequency=<数值>。",
+        "context": {
+          "part": "AC_VOLTAGE",
+          "field": "frequency"
+        }
+      },
+      "ms": 0.0
+    }
+  ],
+  "errors": [
+    {
+      "step": 14,
+      "tool": "add_component",
+      "error": {
+        "code": "UNKNOWN_COMPONENT_TYPE",
+        "message": "元件类型 INDUCTOR/INDUCTOR_VIRTUAL 不在已验证白名单里",
+        "hint": "第一版只开放这些：SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE, POWER_SOURCES/DC_POWER, RESISTOR/RESISTOR_VIRTUAL, CAPACITOR/CAPACITOR_VIRTUAL, POWER_SOURCES/GROUND",
+        "context": {
+          "family": "INDUCTOR",
+          "part": "INDUCTOR_VIRTUAL",
+          "supported": [
+            "SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE",
+            "POWER_SOURCES/DC_POWER",
+            "RESISTOR/RESISTOR_VIRTUAL",
+            "CAPACITOR/CAPACITOR_VIRTUAL",
+            "POWER_SOURCES/GROUND"
+          ]
+        }
+      }
+    },
+    {
+      "step": 15,
+      "tool": "simulate",
+      "error": {
+        "code": "ANALYSIS_NOT_SUPPORTED",
+        "message": "AC_VOLTAGE 不支持 dc（当前后端只验证过 transient）",
+        "hint": "把 analysis 改成 'transient'，或者把源换成支持 'dc' 的类型。",
+        "context": {
+          "analysis": "dc",
+          "source_part": "AC_VOLTAGE",
+          "source_refdes": "V1",
+          "supported": [
+            "transient"
+          ]
+        }
+      }
+    },
+    {
+      "step": 16,
+      "tool": "add_probe",
+      "error": {
+        "code": "AMBIGUOUS_TARGET",
+        "message": "'R1' 是一个元件，它有两个引脚，探针该放哪个？",
+        "hint": "改用网络名，或写成 'R1.1' / 'R1.2'。",
+        "context": {
+          "refdes": "R1",
+          "pins": {
+            "pins": [
+              "1",
+              "2"
+            ],
+            "aliases": {}
+          }
+        }
+      }
+    },
+    {
+      "step": 17,
+      "tool": "add_component",
+      "error": {
+        "code": "MISSING_PARAMETER",
+        "message": "AC_VOLTAGE 需要 frequency（单位 Hz）",
+        "hint": "add_component 里传 frequency=<数值>。",
+        "context": {
+          "part": "AC_VOLTAGE",
+          "field": "frequency"
+        }
+      }
+    }
+  ]
+}
