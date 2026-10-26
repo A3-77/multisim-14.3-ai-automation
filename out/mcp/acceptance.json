@@ -1,11 +1,11 @@
 {
   "rc": {
-    "circuit_id": "c-a580bc84c8",
-    "sim_id": "s-0571926ebf"
+    "circuit_id": "c-0d653b1452",
+    "sim_id": "s-c003f1fd74"
   },
   "dc": {
-    "circuit_id": "c-86c3852baa",
-    "sim_id": "s-e1bb167df3"
+    "circuit_id": "c-7951053930",
+    "sim_id": "s-30bd488d2b"
   },
   "pass": true,
   "fails": [],
@@ -14,6 +14,7 @@
     "add_component",
     "connect",
     "add_probe",
+    "get_circuit",
     "simulate",
     "measure",
     "get_waveform"

@@ -211,28 +211,96 @@ def _norm_pin(comp, pin):
     return (spec.get("aliases") or {}).get(pin)
 
 
-def _pin_list(comp):
-    """展示用：实际引脚 + 别名。"""
+def _pin_available(comp):
+    """可接受的引脚写法（实际引脚 + 别名）。**永远是 list[str]**。"""
     m = PART_META.get((comp.family, comp.part)) or {}
-    return {"pins": list(m.get("pins") or ()),
-            "aliases": dict(m.get("aliases") or {})}
+    out = list(m.get("pins") or ())
+    for a in (m.get("aliases") or {}):
+        if a not in out:
+            out.append(a)
+    return out
+
+
+def _real_pins(comp):
+    """只有实际引脚名（不含别名）。"""
+    m = PART_META.get((comp.family, comp.part)) or {}
+    return list(m.get("pins") or ())
+
+
+def _pin_aliases(comp):
+    m = PART_META.get((comp.family, comp.part)) or {}
+    return dict(m.get("aliases") or {})
+
+
+def _pin_hint(comp):
+    """给人/给 Agent 看的一句话：可用引脚 1, 2（别名 + -> 1, - -> 2）"""
+    avail = _pin_available(comp)
+    al = _pin_aliases(comp)
+    s = ", ".join(avail)
+    if al:
+        s += "（别名 " + ", ".join("%s -> %s" % kv for kv in al.items()) + "）"
+    return s
 
 
 def _comp_dict(comp):
-    d = {"refdes": comp.refdes, "family": comp.family, "part": comp.part,
-         "value": comp.value}
-    if comp.params:
-        # 把内部参数序号翻回语义名（frequency 之类），Agent 不该看到 "5"
-        sem = {}
-        m = PART_META.get((comp.family, comp.part)) or {}
-        for name, spec in (m.get("extra") or {}).items():
-            k = spec["param"]
-            if k in comp.params:
-                sem[name] = comp.params[k]
-        if sem:
-            d["parameters"] = sem
-    d.update(_pin_list(comp))
-    return d
+    """元件对象 —— 所有工具返回的 `component` / `components[]` 都是这个形状。
+
+    字段**固定**，不会因为元件类型少字段（没有的值是 None / {} / []）。
+    - `value` 的语义放在 `value_name` / `value_unit` 里（amplitude / resistance …）
+    - `parameters` 永远存在，键是语义名（frequency），**绝不是 Multisim 参数序号**
+    """
+    m = PART_META.get((comp.family, comp.part)) or {}
+    vmeta = m.get("value") or {}
+    sem = {}
+    for name, spec in (m.get("extra") or {}).items():
+        if comp.params and spec["param"] in comp.params:
+            sem[name] = comp.params[spec["param"]]
+    return {
+        "refdes": comp.refdes,
+        "family": comp.family,
+        "part": comp.part,
+        "value": comp.value,
+        "value_name": vmeta.get("name"),
+        "value_unit": vmeta.get("unit"),
+        "parameters": sem,
+        "pins": list(m.get("pins") or ()),
+        "aliases": dict(m.get("aliases") or {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 通道（探针 + 它的 Multisim 输出名）
+#
+# 这是 v0.6.2 的核心修整：Agent 只需要记一个 ID —— probe_id（"P1"）。
+# Multisim 那边叫什么（label="探针1"、output="V(探针1)"）是只读的旁证，
+# measure / get_waveform 的入参和出参**都只认 probe_id**。
+# ---------------------------------------------------------------------------
+_PROBE_OUT_RE = re.compile(r"^V\((.+)\)$")
+
+
+def _label_of(output):
+    """COM 输出名 -> Multisim 里显示的探针名。'V(探针1)' -> '探针1'"""
+    if not output:
+        return None
+    m = _PROBE_OUT_RE.match(str(output))
+    return m.group(1) if m else str(output)
+
+
+def _channel(probe_id, net, kind="V", output=None):
+    """通道对象 —— `probes[]` 和 `channels{}` 里永远是这一个形状。
+
+    probe_id : 唯一语义 ID，Agent 传参用它
+    label    : Multisim 显示的探针名（simulate 之前是 None）
+    output   : COM 输出名（simulate 之前是 None）
+    """
+    return {"probe_id": probe_id, "label": _label_of(output),
+            "output": output, "net": net, "kind": kind}
+
+
+def _rec_probe(p):
+    """读仿真记录里的探针条目，兼容 v0.6.0/v0.6.1 写的 `name` 键。"""
+    return (p.get("probe_id") or p.get("name"), p.get("net"), p.get("output"))
+
 
 
 def _net_of_pin(ir, refdes, pin):
@@ -268,14 +336,40 @@ def _passives(ir):
             if c.family in ("RESISTOR", "CAPACITOR")]
 
 
+def _latest_outputs(cid, meta):
+    """从最近一次仿真记录里取 probe_id -> output。
+
+    `get_circuit` 在仿真过之后应该能告诉 Agent "这些探针在 Multisim 里叫什么"，
+    而不是永远返回 null。读一个小 JSON，代价可以忽略。
+    """
+    sims = meta.get("sims") or []
+    if not sims:
+        return {}
+    p = os.path.join(_sim_dir(cid), "%s.json" % sims[-1].get("sim_id"))
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            rec = json.load(f)
+    except Exception:
+        return {}
+    out = {}
+    for item in rec.get("probes") or []:
+        pid, _net, o = _rec_probe(item)
+        if pid:
+            out[pid] = o
+    return out
+
+
 def _describe(cid, ir, meta):
-    """统一的状态快照 —— create / add / connect / add_probe 都返回这个形状。"""
+    """统一的状态快照 —— create / add / connect / add_probe / get_circuit 都返回这个形状。"""
+    outs = _latest_outputs(cid, meta)
     return {
         "circuit_id": cid,
         "name": ir.name,
         "components": [_comp_dict(c) for c in ir.components],
         "nets": [{"name": n.name, "pins": list(n.pins)} for n in ir.nets],
-        "probes": [{"name": p.refdes, "net": p.net, "kind": p.kind}
+        "probes": [_channel(p.refdes, p.net, p.kind, outs.get(p.refdes))
                    for p in ir.probes],
         "simulation": {
             "analysis": ir.simulation.analysis,
@@ -465,7 +559,13 @@ def create_circuit(name=None):
 # 工具 2：add_component
 # ---------------------------------------------------------------------------
 def add_component(circuit_id, family, part, refdes=None, value=None,
-                  frequency=None, params=None):
+                  parameters=None, frequency=None, params=None):
+    """加一个元件。
+
+    parameters : dict，键是**语义名**（frequency），不是 Multisim 参数序号
+    frequency  : 单参数便捷写法，等价于 parameters={"frequency": ...}
+    params     : 已废弃，传了会返回 UNSUPPORTED_PARAMETER（绝不静默接受）
+    """
     ir, meta = _load(circuit_id)
     m = _part_meta(family, part)
 
@@ -484,7 +584,8 @@ def add_component(circuit_id, family, part, refdes=None, value=None,
     if vmeta is None:
         if value not in (None, 0):
             raise _err("BAD_ARGUMENT", "%s 不接受 value" % part,
-                       context={"part": part})
+                       "%s 没有可设的值，直接不传。" % part,
+                       part=part, field="value")
         value = None
     else:
         if value is None:
@@ -492,8 +593,9 @@ def add_component(circuit_id, family, part, refdes=None, value=None,
                 raise _err("MISSING_VALUE",
                            "%s 需要 %s（单位 %s）"
                            % (part, vmeta["name"], vmeta["unit"]),
-                           "add_component 里传 value=%s。" % vmeta["name"],
-                           part=part, field=vmeta["name"])
+                           "add_component 里传 value=<数值>（这里是 %s）。"
+                           % vmeta["name"],
+                           part=part, field="value")
             value = None
         else:
             try:
@@ -501,35 +603,63 @@ def add_component(circuit_id, family, part, refdes=None, value=None,
             except (TypeError, ValueError):
                 raise _err("BAD_ARGUMENT",
                            "value 必须是数字，拿到 %r" % (value,),
-                           context={"value": value})
+                           "value 是 %s（单位 %s）。" % (vmeta["name"],
+                                                        vmeta["unit"]),
+                           field="value", value=value)
             if value <= 0:
                 raise _err("BAD_ARGUMENT",
                            "value 必须大于 0（拿到 %g）" % value,
-                           context={"value": value})
+                           field="value", value=value)
 
     # ---------- 语义参数 -> IR params ----------
-    ir_params = {}
-    for k, v in (params or {}).items():
-        try:
-            ir_params[int(k)] = float(v)
-        except (TypeError, ValueError):
-            raise _err("BAD_ARGUMENT", "params 的键/值必须是数字（%r: %r）" % (k, v))
+    # 入参只认语义名（frequency）。Multisim 的参数序号（5）永远不出现。
+    if params:
+        raise _err(
+            "UNSUPPORTED_PARAMETER",
+            "不接受 params（底层参数序号）",
+            "用语义名：add_component(..., parameters={'frequency': 1000})，"
+            "或者直接传 frequency=1000。可用参数见该元件的 supported_parameters。",
+            field="params",
+            supported=list((m.get("extra") or {}).keys()))
+    if parameters is not None and frequency is not None:
+        raise _err(
+            "BAD_ARGUMENT",
+            "parameters 和 frequency 同时给了，不知道以哪个为准",
+            "只保留一种写法：推荐 parameters={'frequency': 1000}。",
+            field="frequency")
+    if frequency is not None:
+        parameters = dict(parameters or {}, frequency=frequency)
+    parameters = dict(parameters or {})
 
-    for pname, pspec in (m.get("extra") or {}).items():
-        got = frequency if pname == "frequency" else None
+    known = (m.get("extra") or {})
+    unknown = [k for k in parameters if k not in known]
+    if unknown:
+        raise _err(
+            "UNKNOWN_PARAMETER",
+            "%s 没有参数 %s" % (part, ", ".join(repr(k) for k in unknown)),
+            "可用的语义参数：%s" % (", ".join(known) or "（没有）"),
+            part=part, field=unknown[0],
+            supported=list(known))
+
+    ir_params = {}
+    for pname, pspec in known.items():
+        got = parameters.get(pname)
         if got is None:
             if pspec.get("required"):
                 raise _err("MISSING_PARAMETER",
                            "%s 需要 %s（单位 %s）" % (part, pname, pspec["unit"]),
-                           "add_component 里传 %s=<数值>。" % pname,
-                           part=part, field=pname)
+                           "add_component 里传 parameters={%r: <数值>}。"
+                           % pname,
+                           part=part, field=pname, supported=list(known))
             continue
         try:
             got = float(got)
         except (TypeError, ValueError):
-            raise _err("BAD_ARGUMENT", "%s 必须是数字，拿到 %r" % (pname, got))
+            raise _err("BAD_ARGUMENT", "%s 必须是数字，拿到 %r" % (pname, got),
+                       field=pname, value=got)
         if got <= 0:
-            raise _err("BAD_ARGUMENT", "%s 必须大于 0（拿到 %g）" % (pname, got))
+            raise _err("BAD_ARGUMENT", "%s 必须大于 0（拿到 %g）" % (pname, got),
+                       field=pname, value=got)
         ir_params[pspec["param"]] = got
 
     comp = irmod.Component(refdes=refdes, family=family, part=part,
@@ -578,8 +708,10 @@ def connect(circuit_id, pins, net=None):
             raise _err("PIN_NOT_FOUND",
                        "%s（%s/%s）没有引脚 %r"
                        % (ref, comp.family, comp.part, pin),
-                       "可用引脚：%s" % _pin_list(comp),
-                       refdes=ref, pin=pin, available=_pin_list(comp))
+                       "可用引脚：%s" % _pin_hint(comp),
+                       refdes=ref, pin=pin,
+                       available=_pin_available(comp),
+                       aliases=_pin_aliases(comp))
         resolved.append((ref, real))
 
     # ---------- 决定网络名 ----------
@@ -598,8 +730,7 @@ def connect(circuit_id, pins, net=None):
                            "引脚 %s.%s 已经属于网络 %r，不能再连到 %r"
                            % (ref, pin, owner, name),
                            "同一个引脚只能属于一条网络；要改连接先重建电路。",
-                           refdes=ref, pin=pin, existing_net=owner,
-                           requested_net=name)
+                           refdes=ref, pin=pin, net=name, existing=[owner])
     else:
         distinct = {o for o in owners if o is not None}
         if len(distinct) > 1:
@@ -608,7 +739,7 @@ def connect(circuit_id, pins, net=None):
                        % ", ".join(sorted(distinct)),
                        "同一个引脚只能属于一条网络；要么显式给 net= 指定目标网络，"
                        "要么分两次 connect。",
-                       nets=sorted(distinct),
+                       net=None, existing=sorted(distinct),
                        pins=["%s.%s" % p for p in resolved])
         if len(distinct) == 1:
             name = next(iter(distinct))
@@ -632,7 +763,10 @@ def connect(circuit_id, pins, net=None):
 
     _save(circuit_id, ir, meta)
     out = _describe(circuit_id, ir, meta)
-    out["net"] = {"name": name, "pins": list(ir.net(name).pins), "created": created}
+    # `net` 的形状与 _describe 里的 nets[] 完全一致（name + pins），
+    # "是不是新建的" 放在顶层，不塞进 net 里。
+    out["net"] = {"name": name, "pins": list(ir.net(name).pins)}
+    out["created"] = created
     return out
 
 
@@ -656,8 +790,10 @@ def _resolve_target(ir, target):
         if real is None:
             raise _err("PIN_NOT_FOUND",
                        "%s 没有引脚 %r" % (ref, pin),
-                       "可用引脚：%s" % _pin_list(comp),
-                       refdes=ref, pin=pin, available=_pin_list(comp))
+                       "可用引脚：%s" % _pin_hint(comp),
+                       refdes=ref, pin=pin,
+                       available=_pin_available(comp),
+                       aliases=_pin_aliases(comp))
         net = _net_of_pin(ir, ref, real)
         if net is None:
             raise _err("PIN_NOT_CONNECTED", "引脚 %s.%s 还没接到任何网络" % (ref, real),
@@ -668,7 +804,9 @@ def _resolve_target(ir, target):
         raise _err("AMBIGUOUS_TARGET",
                    "%r 是一个元件，它有两个引脚，探针该放哪个？" % t,
                    "改用网络名，或写成 '%s.1' / '%s.2'。" % (t, t),
-                   refdes=t, pins=_pin_list(comp))
+                   refdes=t,
+                   available=["%s.%s" % (t, p) for p in _real_pins(comp)],
+                   aliases=_pin_aliases(comp))
     raise _err("NET_NOT_FOUND", "找不到网络 %r" % t,
                "可用网络：%s" % [n.name for n in ir.nets],
                target=t, nets=[n.name for n in ir.nets])
@@ -681,7 +819,7 @@ def add_probe(circuit_id, target, name=None):
     if len(ir.probes) >= MAX_PROBES:
         raise _err("PROBE_LIMIT",
                    "探针数量已达上限 %d" % MAX_PROBES,
-                   "LocalName 序号超过一位数字时的命名规则还没验证，"
+                   "探针名超过一位数字时的命名规则还没验证，"
                    "第一版最多 %d 个探针。" % MAX_PROBES,
                    count=len(ir.probes), limit=MAX_PROBES)
 
@@ -689,16 +827,17 @@ def add_probe(circuit_id, target, name=None):
     if any(p.refdes == pname for p in ir.probes):
         raise _err("PROBE_DUPLICATE", "探针名 %r 重复" % pname,
                    "换一个名字，或不传 name 让我自动编号。",
-                   name=pname, existing=[p.refdes for p in ir.probes])
+                   probe_id=pname, existing=[p.refdes for p in ir.probes])
     if ir.component(pname) is not None:
         raise _err("PROBE_DUPLICATE", "探针名 %r 与元件位号重名" % pname,
-                   name=pname)
+                   "换一个名字。", probe_id=pname,
+                   existing=[c.refdes for c in ir.components])
 
-    ir.probes.append(irmod.Probe(refdes=pname, kind="V", net=net))
+    pr = irmod.Probe(refdes=pname, kind="V", net=net)
+    ir.probes.append(pr)
     _save(circuit_id, ir, meta)
     out = _describe(circuit_id, ir, meta)
-    out["probe"] = {"name": pname, "net": net, "kind": "V",
-                    "index": len(ir.probes)}
+    out["probe"] = _channel(pr.refdes, pr.net, pr.kind)
     return out
 
 
@@ -748,7 +887,38 @@ def _default_analysis(ir):
 
 
 def simulate(circuit_id, analysis=None, start=None, stop=None,
-             sample_rate=None):
+             sample_rate=None, timeout=None):
+    """编译 + 真跑 Multisim。
+
+    timeout 是**软超时**：只在阶段之间（布局 / 编译 / 跑仿真）检查，
+    无法中断已经在进行的 Multisim COM 调用。超时会返回 SIMULATION_TIMEOUT，
+    并带上已完成阶段的耗时 —— 这样 Agent 至少知道"卡在哪一步"。
+    真正的硬超时和 progress 通知留给后续版本（见 docs/mcp.md）。
+    """
+    t_begin = time.time()
+    budget = None
+    if timeout is not None:
+        try:
+            budget = float(timeout)
+        except (TypeError, ValueError):
+            raise _err("BAD_ARGUMENT", "timeout 必须是秒数，拿到 %r" % (timeout,),
+                       field="timeout", value=timeout)
+        if budget <= 0:
+            raise _err("BAD_ARGUMENT", "timeout 必须大于 0（拿到 %g）" % budget,
+                       field="timeout", value=budget)
+
+    def _spent():
+        return round(time.time() - t_begin, 3)
+
+    def _check(phase):
+        if budget is not None and _spent() > budget:
+            raise _err("SIMULATION_TIMEOUT",
+                       "仿真超过 %.1f s 预算（%s 阶段后已用 %.1f s）"
+                       % (budget, phase, _spent()),
+                       "调大 timeout；或者缩短 stop / 降低 sample_rate。"
+                       "注意这是软超时，无法中断已开始的 Multisim 调用。",
+                       phase=phase, elapsed_s=_spent(), timeout_s=budget)
+
     ir, meta = _load(circuit_id)
 
     if not ir.probes:
@@ -762,6 +932,8 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
     pos = plan_layout(ir)
     for comp in ir.components:
         comp.position = pos.get(comp.refdes, comp.position)
+    t_layout = _spent()
+    _check("layout")
 
     # ---------- 仿真参数 ----------
     s = ir.simulation
@@ -802,6 +974,8 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
     except ir_compile.CompileError as e:
         raise _err("COMPILE_FAILED", "IR -> .ms14 失败：%s" % e,
                    "这通常是布局或引脚映射的问题，检查 issues。")
+    t_compile = _spent()
+    _check("compile")
 
     # ---------- 跑仿真 ----------
     isim = _ir_sim()
@@ -809,6 +983,13 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
         res = isim.simulate_dc(ms14, verbose=False)
     else:
         res = isim.simulate(ms14, s.stop, s.sample_rate, verbose=False)
+    t_run = _spent()
+    _check("run")
+
+    timing = {"layout_s": round(t_layout, 3),
+              "compile_s": round(t_compile - t_layout, 3),
+              "run_s": round(t_run - t_compile, 3),
+              "total_s": t_run}
 
     if len(res["data"]) == 0:
         raise _err(
@@ -839,16 +1020,20 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
                     row.append("%.9g" % res["data"][nm][1][i])
                 w.writerow(row)
 
+    # 通道对象：probe_id 是唯一 ID，output 只是 Multisim 那边的旁证
     probe_map = []
     for i, pr in enumerate(ir.probes):
-        probe_map.append({"name": pr.refdes, "net": pr.net,
-                          "output": outs[i] if i < len(outs) else None})
+        probe_map.append(_channel(pr.refdes, pr.net, pr.kind,
+                                  outs[i] if i < len(outs) else None))
 
     summary = {}
-    for nm in chans:
+    for ch in probe_map:
+        nm = ch["output"]
+        if nm not in chans:
+            continue
         v = res["data"][nm][1]
-        summary[nm] = {"n": len(v), "min": min(v), "max": max(v),
-                       "mean": sum(v) / len(v)}
+        summary[ch["probe_id"]] = {"n": len(v), "min": min(v), "max": max(v),
+                                   "mean": sum(v) / len(v)}
 
     rec = {
         "sim_id": sid, "circuit_id": circuit_id, "analysis": analysis,
@@ -861,6 +1046,7 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
         "ir_snapshot": os.path.relpath(snap, ROOT),
         "waveform": os.path.relpath(csv_path, ROOT) if chans else None,
         "summary": summary,
+        "timing": timing,
         "compile": {"bytes": crep.get("bytes")},
     }
     rec_path = os.path.join(sim_dir, "%s.json" % sid)
@@ -932,43 +1118,66 @@ def _topology(ir):
             "v_gnd_net": v_gnd_net, "resistors": rs}
 
 
-def measure(sim_id, what="all", probe=None):
+_ID_KEYS = ("probe_id", "label", "output", "net", "kind")
+
+
+def _probe_not_found(given, rec):
+    """探针找不到时，尽量告诉 Agent「你传的是什么、该传什么」。"""
+    items = [(_rec_probe(p)) for p in (rec.get("probes") or [])]
+    ids = [i[0] for i in items]
+    by_output = {i[2]: i[0] for i in items if i[2]}
+    by_label = {_label_of(i[2]): i[0] for i in items if i[2]}
+    g = str(given or "")
+    if g in by_output or g in by_label:
+        pid = by_output.get(g) or by_label.get(g)
+        return _err("PROBE_NOT_FOUND",
+                    "%r 是 Multisim 那边的名字，不是 probe_id" % g,
+                    "probe_id 是 %r。measure / get_waveform 只接受 probe_id；"
+                    "label / output 是只读旁证，不要拿它传参。" % pid,
+                    field="probe_id", value=g, available=ids, matched=pid)
+    return _err("PROBE_NOT_FOUND", "没有探针 %r" % given,
+                "可用 probe_id：%s" % (", ".join(ids) or "（没有）"),
+                field="probe_id", value=g, available=ids)
+
+
+def measure(sim_id, what="all", probe_id=None):
     rec = _load_sim(sim_id)
     ir = irmod.CircuitIR.load(os.path.join(ROOT, rec["ir_snapshot"]))
     names, t, data = _read_waveform(rec)
     topo = _topology(ir)
 
-    # 探针名 -> 通道
+    # 通道一律以 probe_id 为键；output 只是旁证字段
     chans = {}
-    for pr in rec["probes"]:
-        if probe and pr["name"] != probe:
+    for item in rec.get("probes") or []:
+        pid, net, output = _rec_probe(item)
+        if probe_id and pid != probe_id:
             continue
-        nm = pr["output"]
-        if nm not in data:
+        if output not in data:
             continue
-        v = data[nm]
-        chans[pr["name"]] = {
-            "net": pr["net"], "output": nm, "n": len(v),
-            "min": min(v), "max": max(v),
-            "mean": sum(v) / len(v),
-            "rms": math.sqrt(sum(x * x for x in v) / len(v)),
-        }
+        v = data[output]
+        ch = _channel(pid, net, "V", output)
+        ch.update({"n": len(v), "min": min(v), "max": max(v),
+                   "mean": sum(v) / len(v),
+                   "rms": math.sqrt(sum(x * x for x in v) / len(v))})
+        chans[pid] = ch
 
     if not chans:
-        raise _err("PROBE_NOT_FOUND",
-                   "没有任何可用通道（probe=%r）" % probe,
-                   "可用探针：%s" % [p["name"] for p in rec["probes"]],
-                   available=[p["name"] for p in rec["probes"]])
+        raise _probe_not_found(probe_id, rec)
 
     out = {"ok": True, "sim_id": sim_id, "analysis": rec["analysis"],
-           "what": what, "channels": chans, "notes": []}
+           "what": what,
+           "probes": [_channel(_rec_probe(p)[0], _rec_probe(p)[1],
+                               kind="V", output=_rec_probe(p)[2])
+                      for p in (rec.get("probes") or [])],
+           "channels": chans, "notes": []}
 
     if rec["analysis"] == "dc":
         # ---------- 直流：按拓扑算电阻电压 / 电流 ----------
         by_net = {}
-        for pr in rec["probes"]:
-            if pr["name"] in chans:
-                by_net[pr["net"]] = chans[pr["name"]]["mean"]
+        for item in rec.get("probes") or []:
+            pid, net, _o = _rec_probe(item)
+            if pid in chans:
+                by_net[net] = chans[pid]["mean"]
         v_in = by_net.get(topo["v_in_net"]) if topo["v_in_net"] else None
         v_gnd = by_net.get(topo["v_gnd_net"]) if topo["v_gnd_net"] else None
         out.update({"v_source_net": v_in, "v_ground_net": v_gnd})
@@ -984,7 +1193,7 @@ def measure(sim_id, what="all", probe=None):
         out.update({
             "v_resistor": v_r,
             "r": r_ms if r_ms else (r.value if r else None),
-            "r_source": "Multisim RLCValue" if r_ms else ("IR" if r else None),
+            "r_source": "multisim" if r_ms else ("ir" if r else None),
             "current": i_r,
             "current_source": "I = V_R / R（欧姆定律，电压来自探针实测）",
         })
@@ -1014,7 +1223,7 @@ def measure(sim_id, what="all", probe=None):
                 ch["phase_deg"] = math.degrees(f[1])
                 ch["offset"] = f[2]
 
-        order = [p["name"] for p in rec["probes"] if p["name"] in chans]
+        order = [p["probe_id"] for p in out["probes"] if p["probe_id"] in chans]
         amp0 = chans[order[0]].get("amp")
         src_amp = float(topo["src"].value or 0.0) if topo["src"] else 0.0
         if len(order) >= 2 and amp0:
@@ -1055,35 +1264,46 @@ def measure(sim_id, what="all", probe=None):
                    "可用：%s" % ", ".join(keep))
     keys = keep[what]
     if keys is not None:
-        for pname, ch in chans.items():
-            chans[pname] = {k: v for k, v in ch.items() if k in keys}
+        for pid, ch in chans.items():
+            # 身份字段永远保留 —— 否则 what="amplitude" 之后 Agent 就不知道
+            # 这个通道是哪个探针了（这正是 v0.6.1 暴露的问题）
+            chans[pid] = {k: v for k, v in ch.items()
+                          if k in keys or k in _ID_KEYS}
     return out
 
 
 # ---------------------------------------------------------------------------
 # 工具 7：get_waveform
 # ---------------------------------------------------------------------------
-def get_waveform(sim_id, probe=None, max_points=200):
+def get_waveform(sim_id, probe_id=None, max_points=200):
     rec = _load_sim(sim_id)
     names, t, data = _read_waveform(rec)
     if not names:
         raise _err("SIMULATION_FAILED", "波形文件是空的")
 
+    chans_of = {}
+    for item in rec.get("probes") or []:
+        pid, net, output = _rec_probe(item)
+        if output in data:
+            chans_of[pid] = (net, output)
+    if not chans_of:
+        raise _err("SIMULATION_FAILED",
+                   "这次仿真没有任何通道有数据",
+                   "检查探针是否落在导线上。", outputs=names)
+
+    if probe_id:
+        if probe_id not in chans_of:
+            raise _probe_not_found(probe_id, rec)
+        chans_of = {probe_id: chans_of[probe_id]}
+
     out = {"ok": True, "sim_id": sim_id, "analysis": rec["analysis"],
            "sample_rate": rec.get("sample_rate"), "n": len(t),
            "t_range": [t[0], t[-1]] if t else [],
-           "artifact": rec.get("waveform"), "channels": {}}
-
-    targets = names
-    if probe:
-        hit = [p for p in rec["probes"] if p["name"] == probe]
-        if not hit:
-            raise _err("PROBE_NOT_FOUND", "没有探针 %r" % probe,
-                       "可用探针：%s" % [p["name"] for p in rec["probes"]])
-        nm = hit[0]["output"]
-        if nm not in data:
-            raise _err("PROBE_NOT_FOUND", "探针 %r 没有数据" % probe)
-        targets = [nm]
+           "artifact": rec.get("waveform"),
+           "probes": [_channel(_rec_probe(p)[0], _rec_probe(p)[1],
+                               kind="V", output=_rec_probe(p)[2])
+                      for p in (rec.get("probes") or [])],
+           "channels": {}}
 
     try:
         max_points = int(max_points)
@@ -1092,14 +1312,16 @@ def get_waveform(sim_id, probe=None, max_points=200):
     max_points = max(2, min(max_points, 5000))
     step = max(1, len(t) // max_points)
 
-    for nm in targets:
+    for pid, (net, nm) in chans_of.items():
         v = data[nm]
-        out["channels"][nm] = {
+        ch = _channel(pid, net, "V", nm)
+        ch.update({
             "n": len(v), "min": min(v), "max": max(v),
             "mean": sum(v) / len(v),
             "preview": {"t": [t[i] for i in range(0, len(t), step)],
                         "v": [v[i] for i in range(0, len(v), step)]},
-        }
+        })
+        out["channels"][pid] = ch
     out["preview_step"] = step
     return out
 

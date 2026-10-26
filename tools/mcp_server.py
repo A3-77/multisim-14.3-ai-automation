@@ -8,15 +8,22 @@ MCP 的 stdio 传输就是「一行一个 JSON-RPC 2.0 消息」，实现一个�
 比引入依赖并让它兼容 32 位环境更省事。这里只实现 Agent 真正会用到的三条：
     initialize / tools/list / tools/call
 
-七个工具（都在 circuit_session 里实现，这里只做协议适配）
+八个工具（都在 circuit_session 里实现，这里只做协议适配）
 --------------------------------------------------------
     create_circuit    建会话，拿 circuit_id
-    add_component     加元件（语义参数：amplitude / frequency / resistance）
+    add_component     加元件（value + parameters，语义名，不暴露参数序号）
     connect           连网络（自动命名、自动判重）
     add_probe         加探针（按网络名或引脚，自动唯一命名）
+    get_circuit       只读地取回电路当前状态（跨调用/跨会话核对用）
     simulate          transient / dc，自动布局 + 编译 + 跑 Multisim
     measure           增益 / 相位 / 幅值 / 直流电压
     get_waveform      波形摘要 + 预览 + 产物路径
+
+一条贯穿所有工具的约定（v0.6.2）
+--------------------------------
+**探针只有 probe_id 一个身份。** `P1` 是唯一语义 ID，`measure` / `get_waveform`
+的入参和 `channels` 的键都用它。`label`（探针1）/ `output`（V(探针1)）是 Multisim
+那边的只读旁证，绝不参与寻址。
 
 stdout 只走协议
 ---------------
@@ -55,18 +62,34 @@ except Exception:
 import circuit_session as S     # noqa: E402
 
 SERVER_NAME = "multisim-circuit"
-SERVER_VERSION = "0.6.0"
+SERVER_VERSION = "0.6.2"
 PROTOCOL_VERSION = "2024-11-05"
 
 
 # ---------------------------------------------------------------------------
 # 工具 schema
 #
-# description 是写给 Agent 看的：说清楚"什么时候用"和"什么时候不该用"，
-# 比列参数更重要。错误提示里也会引用这些约束。
+# **这个 schema 就是 Agent 的 API 文档。** 描述写错了，Agent 就会写错代码 ——
+# 而且从日志里看不出是 API 的问题还是模型的问题。所以：
+#   * 每个参数的 description 必须和实现一致（v0.6.1 的 get_waveform 就是反例）
+#   * 返回对象的字段在这里写清楚，让 Agent 不用猜
+#   * 不要出现 Multisim 内部概念（参数序号、CiID、SimState、探针的 LocalName）
 # ---------------------------------------------------------------------------
 _CID = {"type": "string",
         "description": "create_circuit 返回的 circuit_id，形如 c-1a2b3c4d5e"}
+
+_SIM_ID = {"type": "string",
+           "description": "simulate 返回的 sim_id，形如 s-1a2b3c4d5e"}
+
+_PROBE_ID = {
+    "type": "string",
+    "description": (
+        "探针的 probe_id（如 P1），就是 add_probe 里 name 给的那个、"
+        "simulate 返回的 probes[].probe_id。**不是** Multisim 的显示名"
+        "（探针1）或输出名（V(探针1)）—— 传错会返回 PROBE_NOT_FOUND，"
+        "并在 hint 里告诉你正确的 probe_id。"
+    ),
+}
 
 TOOLS = [
     {
@@ -88,12 +111,16 @@ TOOLS = [
         "name": "add_component",
         "description": (
             "往电路里加一个元件。只接受已验证过真机仿真的五种：\n"
-            "  SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE（正弦源，需要 amplitude + frequency）\n"
-            "  POWER_SOURCES/DC_POWER（直流源，需要 voltage）\n"
-            "  RESISTOR/RESISTOR_VIRTUAL（需要 resistance，单位 Ω）\n"
-            "  CAPACITOR/CAPACITOR_VIRTUAL（需要 capacitance，单位 F）\n"
-            "  POWER_SOURCES/GROUND（接地，不需要 value）\n"
-            "不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。"
+            "  SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE（正弦源，value=幅值V，"
+            "parameters={'frequency': Hz}）\n"
+            "  POWER_SOURCES/DC_POWER（直流源，value=电压V）\n"
+            "  RESISTOR/RESISTOR_VIRTUAL（value=阻值 Ω）\n"
+            "  CAPACITOR/CAPACITOR_VIRTUAL（value=容值 F）\n"
+            "  POWER_SOURCES/GROUND（不需要 value）\n"
+            "不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。\n"
+            "返回的 component 是固定形状：refdes / family / part / value / "
+            "value_name / value_unit / parameters / pins / aliases。"
+            "parameters 的键永远是语义名（frequency），不会是数字序号。"
         ),
         "inputSchema": {
             "type": "object",
@@ -106,11 +133,21 @@ TOOLS = [
                 "refdes": {"type": "string",
                            "description": "位号（V1 / R1 / C1 / GND1）。不传则自动编号"},
                 "value": {"type": "number",
-                          "description": "元件值：幅值 V / 电压 V / 阻值 Ω / 容值 F"},
+                          "description": (
+                              "元件的主值。语义由元件类型决定（AC_VOLTAGE=幅值V / "
+                              "DC_POWER=电压V / 电阻=Ω / 电容=F）。返回的 "
+                              "component.value_name + value_unit 会明确告诉你它是"
+                              "什么，不用猜。")},
+                "parameters": {"type": "object",
+                               "description": (
+                                   "附加参数，键是语义名。目前只有 AC_VOLTAGE 用得上："
+                                   '{"frequency": 1000}（单位 Hz）。'
+                                   "键写错会返回 UNKNOWN_PARAMETER 并列出可用参数。"
+                                   "**不要在键里写数字序号**（如 {\"5\": 1000}）。")},
                 "frequency": {"type": "number",
-                              "description": "仅 AC_VOLTAGE 需要，单位 Hz"},
-                "params": {"type": "object",
-                           "description": "高级用法：直接给底层参数序号。一般不要用"},
+                              "description": (
+                                  "parameters={'frequency': ...} 的便捷写法，"
+                                  "两者等价，**不要同时传**。")},
             },
             "required": ["circuit_id", "family", "part"],
         },
@@ -142,7 +179,7 @@ TOOLS = [
             "在某个网络上放一个电压探针。target 可以是网络名（'out'）、"
             "引脚（'R1.2'，自动解析成它所在的网络）。\n"
             "不要传元件位号（'R1'）—— 两端元件有两个引脚，会报 AMBIGUOUS_TARGET。\n"
-            "最多 9 个探针（LocalName 序号超过一位数字的命名规则还没验证）。"
+            "最多 9 个探针（超过 9 个时的命名规则还没验证）。"
         ),
         "inputSchema": {
             "type": "object",
@@ -151,9 +188,28 @@ TOOLS = [
                 "target": {"type": "string",
                            "description": "网络名（'in'）或引脚（'R1.2'）"},
                 "name": {"type": "string",
-                         "description": "探针名。不传则自动编号 P1/P2/..."},
+                         "description": ("探针的 probe_id（也是它的名字）。不传则自动编号 "
+                                         "P1/P2/...。之后 measure / get_waveform "
+                                         "都用这个 ID 指定通道。")},
             },
             "required": ["circuit_id", "target"],
+        },
+    },
+    {
+        "name": "get_circuit",
+        "description": (
+            "只读地取回一个电路当前的状态，不改变任何东西。\n"
+            "什么时候用：改了电路想确认现在长什么样；隔了几轮对话只记得 "
+            "circuit_id；想在动手前先看看已经有什么。\n"
+            "返回和 create / add_component / connect 完全相同的快照结构："
+            "components / nets / probes / simulation / simulations / counts / "
+            "warnings。如果这个电路已经仿真过，probes[] 里的 label / output "
+            "会被填上（否则是 null）。"
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"circuit_id": _CID},
+            "required": ["circuit_id"],
         },
     },
     {
@@ -165,7 +221,10 @@ TOOLS = [
             "DC_POWER 默认 dc（也允许 transient）。不匹配会返回 "
             "ANALYSIS_NOT_SUPPORTED 并告诉你该改成什么。\n"
             "transient 不传 stop / sample_rate 时按信号频率自动推算（6 个周期、"
-            "每周期 200 点）。"
+            "每周期 200 点）。\n"
+            "这个调用是阻塞的，实测单次 30 s 左右（编译 + 启 Multisim + 读数）。"
+            "返回里带 timing（layout_s / compile_s / run_s / total_s），"
+            "可以用它判断电路复杂度和该给多少超时。"
         ),
         "inputSchema": {
             "type": "object",
@@ -177,6 +236,12 @@ TOOLS = [
                 "stop": {"type": "number", "description": "结束时间 s（仅 transient）"},
                 "sample_rate": {"type": "number",
                                 "description": "采样率 Hz（仅 transient）"},
+                "timeout": {"type": "number",
+                            "description": (
+                                "软超时，单位秒。只在阶段之间（布局 / 编译 / 跑仿真）"
+                                "检查，**无法中断已经开始的 Multisim 调用**；"
+                                "超了返回 SIMULATION_TIMEOUT 并带上已用时间。"
+                                "不传则不限制。")},
             },
             "required": ["circuit_id"],
         },
@@ -191,17 +256,20 @@ TOOLS = [
             "  phase            每通道相位（仅 transient）\n"
             "  dc_voltage       每通道直流电压（仅 dc）\n"
             "transient 会额外给 gain / phase_deg / theory；dc 会给 "
-            "v_resistor / current（I = V_R / R，R 来自 Multisim RLCValue）。"
+            "v_resistor / current（I = V_R / R，R 是 Multisim 读回来的实际阻值，\n"
+            "用 r_source 标明来源：multisim / ir）。\n"
+            "channels 是以 **probe_id 为键** 的对象，和 get_waveform 的 channels "
+            "完全一致；每个通道固定带 probe_id / label / output / net / kind，"
+            "再叠加测量字段（what 过滤不会删掉身份字段）。"
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "sim_id": {"type": "string", "description": "simulate 返回的 sim_id"},
+                "sim_id": _SIM_ID,
                 "what": {"type": "string",
                          "enum": ["all", "voltage", "amplitude", "phase",
                                   "dc_voltage"]},
-                "probe": {"type": "string",
-                          "description": "只看某一个探针（探针名，如 P1）"},
+                "probe_id": _PROBE_ID,
             },
             "required": ["sim_id"],
         },
@@ -211,13 +279,15 @@ TOOLS = [
         "description": (
             "取波形数据。不会把整条波形塞进返回值：默认只给摘要（n / min / max / "
             "mean / 时间范围）+ 最多 max_points 个采样点的预览，完整数据在 "
-            "artifact 指向的 CSV 里。"
+            "artifact 指向的 CSV 里。\n"
+            "channels 是以 **probe_id 为键** 的对象，和 measure 的 channels "
+            "完全一致 —— 两个工具的通道可以直接对照，不需要自己映射。"
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "sim_id": {"type": "string", "description": "simulate 返回的 sim_id"},
-                "probe": {"type": "string", "description": "只看某个通道的输出名"},
+                "sim_id": _SIM_ID,
+                "probe_id": _PROBE_ID,
                 "max_points": {"type": "integer",
                                "description": "预览采样点上限，默认 200，最大 5000"},
             },
@@ -231,6 +301,7 @@ _DISPATCH = {
     "add_component": S.add_component,
     "connect": S.connect,
     "add_probe": S.add_probe,
+    "get_circuit": S.get_circuit,
     "simulate": S.simulate,
     "measure": S.measure,
     "get_waveform": S.get_waveform,
@@ -323,8 +394,11 @@ def handle(msg):
             "instructions": (
                 "这是 Multisim 电路执行器。典型流程："
                 "create_circuit -> add_component × N -> connect -> add_probe -> "
-                "simulate -> measure / get_waveform。"
+                "simulate -> measure / get_waveform；"
+                "get_circuit 可以随时只读取回当前电路状态。"
                 "不要传坐标，布局由 simulate 自动算。"
+                "探针只有 probe_id 一个身份（P1），measure / get_waveform "
+                "都用它指定通道，不要用 Multisim 的显示名或输出名。"
                 "只支持单电源串联链到地的拓扑（并联会报 LAYOUT_UNSUPPORTED）。"
             ),
         })

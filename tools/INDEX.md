@@ -14,10 +14,10 @@
 | `circuit_ir.py` | **Circuit IR 数据模型 + 校验**（纯 JSON，不含任何 XML 概念） |
 | `ir_compile.py` | IR → `.ms14`（只调用已验证 API，落盘前先跑校验） |
 | `ir_run.py` | IR 端到端验收（编译 → 仿真 → 拟合 → 与直接 API 基线比对） |
-| `circuit_session.py` | **MCP 会话层**：circuit_id 句柄 / 语义参数映射 / 自动布局 / 结构化错误 |
-| `mcp_server.py` | **MCP Server**（JSON-RPC over stdio，7 个工具；stdout 只走协议） |
-| `mcp_client.py` | MCP 验收客户端：起子进程走真实协议，建 RC 与 DC 两个电路 |
-| `test_mcp_session.py` | 会话层测试：57 项，不需要 Multisim |
+| `circuit_session.py` | **MCP 会话层**：circuit_id 句柄 / 语义参数映射 / 自动布局 / 结构化错误 / 统一返回对象（v0.6.2） |
+| `mcp_server.py` | **MCP Server**（JSON-RPC over stdio，8 个工具；stdout 只走协议；schema 就是 Agent 的 API 文档） |
+| `mcp_client.py` | MCP 验收客户端：起子进程走真实协议，建 RC 与 DC 两个电路，55 项断言 |
+| `test_mcp_session.py` | 会话层测试：78 项，不需要 Multisim（含 v0.6.2 的 probe_id / parameters / 返回形状） |
 | `ir_sim.py` | 仿真 + 拟合内核（`nl_run` 用；`ir_run` 保持原样当基线，不被它影响） |
 | `nl2ir.py` | **中文 → Circuit IR**（规则解析器，不依赖 LLM；产出前先 `validate()`） |
 | `nl_run.py` | 中文端到端验收（一句话 → IR → `.ms14` → 仿真 → 理论比对） |

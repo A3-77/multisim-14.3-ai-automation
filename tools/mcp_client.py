@@ -235,8 +235,11 @@ def build_rc(cli):
     # what 过滤
     mv = cli.call("measure", sim_id=sim["sim_id"], what="amplitude")[0]
     ch0 = list(mv["channels"].values())[0]
-    check("what=amplitude 只返回 amp",
+    check("what=amplitude 只返回 amp（不留 mean）",
           "amp" in ch0 and "mean" not in ch0, str(sorted(ch0)))
+    check("what 过滤不删身份字段（probe_id 仍在）",
+          ch0.get("probe_id") == "P1" and "output" in ch0,
+          str({k: ch0.get(k) for k in ("probe_id", "label", "output")}))
 
     w = cli.call("get_waveform", sim_id=sim["sim_id"], max_points=50)[0]
     check("get_waveform 给摘要而不是整条波形", w["n"] > 1000
@@ -244,6 +247,27 @@ def build_rc(cli):
           "n=%d preview=%d" % (w["n"],
                                len(list(w["channels"].values())[0]["preview"]["t"])))
     check("get_waveform 给了产物路径", bool(w.get("artifact")), w.get("artifact"))
+    check("measure / get_waveform 的 channels 用同一套键",
+          set(m["channels"]) == set(w["channels"]) == {"P1", "P2"},
+          "%s vs %s" % (sorted(m["channels"]), sorted(w["channels"])))
+
+    w1 = cli.call("get_waveform", sim_id=sim["sim_id"], probe_id="P2")[0]
+    check("probe_id 过滤生效", set(w1["channels"]) == {"P2"},
+          str(sorted(w1["channels"])))
+    check("通道带 Multisim 侧的 label / output 旁证",
+          w1["channels"]["P2"].get("label") and w1["channels"]["P2"].get("output"),
+          str({k: w1["channels"]["P2"].get(k) for k in ("label", "output")}))
+
+    # get_circuit：只读回读，跨会话核对
+    gc = cli.call("get_circuit", circuit_id=cid)[0]
+    check("get_circuit 能读回电路", gc["counts"]["components"] == 4,
+          str(gc["counts"]))
+    check("get_circuit 的 probes 也是 5 字段",
+          all(set(x) == {"probe_id", "label", "output", "net", "kind"}
+              for x in gc["probes"]), str(gc["probes"]))
+    check("仿真过之后 get_circuit 能给出 output 名",
+          gc["probes"][0].get("output") == sim["outputs"][0],
+          str([x.get("output") for x in gc["probes"]]))
 
     return cid, sim["sim_id"]
 
@@ -282,7 +306,7 @@ def build_dc(cli):
           "%.6f" % m["v_ground_net"])
     check("电阻两端电压 ≈ 5 V", approx(m["v_resistor"], 5.0, 0.01),
           "%.6f" % m["v_resistor"])
-    check("R = 1000 Ω（Multisim RLCValue）", approx(m["r"], 1000.0, 1e-6),
+    check("R = 1000 Ω（来源 %s）" % m["r_source"], approx(m["r"], 1000.0, 1e-6),
           "%.4f（来源 %s）" % (m["r"], m["r_source"]))
     check("电流 ≈ 5 mA", approx(m["current"], 0.005, 1e-4),
           "%.6f A" % m["current"])
@@ -389,8 +413,8 @@ def main():
         tools = cli.list_tools()
         names = [t["name"] for t in tools]
         want = ["create_circuit", "add_component", "connect", "add_probe",
-                "simulate", "measure", "get_waveform"]
-        check("tools/list 正好 7 个工具", names == want, str(names))
+                "get_circuit", "simulate", "measure", "get_waveform"]
+        check("tools/list 正好 8 个工具", names == want, str(names))
         check("每个工具都有 inputSchema",
               all("inputSchema" in t for t in tools))
         check("schema 里不出现 Multisim 内部概念",

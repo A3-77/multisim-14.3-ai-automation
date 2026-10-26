@@ -1,5 +1,24 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## 🧹 v0.6.2（2026-10-26）：API 一致性修整 —— 让 Agent 不用猜
+>
+> v0.6.1 的验收证明了「Agent 能用」，但也暴露了 3 处**同一个概念两套命名**。
+> v0.6.2 只做清账，不碰 `ir_sim` / `ir_compile` / `msbuild` / `mssafe`：
+>
+> | 问题 | 修法 |
+> | --- | --- |
+> | `measure` 用 `P1` 作键、`get_waveform` 用 `V(探针1)` 作键 | 统一 **`probe_id`**，两个工具入参和 `channels` 键完全一致 |
+> | `get_waveform` 描述写"输出名"、实际只收探针名 | 改 `probe_id`，传错会直接告诉你该传什么 |
+> | `context` 的 `available` 有时是数组、有时是对象 | 定死字段词表：**同名字段永远同类型** |
+> | `params` 暴露了 Multisim 参数序号 | 入参只认 `parameters={"frequency": 1000}`，传 `params` 直接报错 |
+> | 没有 `get_circuit` | 新增第 8 个工具，只读取回电路状态 |
+> | `simulate` 阻塞 30 s 无信息 | 返回 `timing`（layout/compile/run）+ 软 `timeout` |
+>
+> 回归：`test_mcp_session` **78/78**、MCP 真实协议验收 **55/55**、
+> `test_mssafe` 4/4、`test_nl2ir` 59/59、`ir_run` 增益 Δ=**0.00e+00**。
+>
+> ---
+>
 > ## 🎬 v0.6.1（2026-10-26）：Agent Acceptance Test —— 外部 Agent 自己设计并仿真一个电路
 >
 > 一个只读过 MCP `tools/list`、不知道 Multisim 任何内部概念的外部 Agent，拿到一句需求：
@@ -36,7 +55,7 @@
 > 分了两层：`mcp_server.py` 只做 JSON-RPC 收发（薄到没分支逻辑），
 > `circuit_session.py` 是真正的业务层 —— 电路句柄、语义参数映射、
 > 唯一性检查、自动网络命名、**自动布局**、分析类型匹配、结构化错误。
-> 会话层能单独测试：`test_mcp_session.py` 57 项，不需要 Multisim。
+> 会话层能单独测试：`test_mcp_session.py` 78 项，不需要 Multisim。
 >
 > **2. Agent 永远看不到 Multisim**
 >
@@ -260,7 +279,7 @@
 | [docs/circuit-xml.md](docs/circuit-xml.md) | **电路 XML 对象模型**：两棵平行树、坐标系、引脚几何公式、参数存储位置 |
 | [docs/nl2ir.md](docs/nl2ir.md) | **中文 → Circuit IR**：支持的句式、解析算法、错误哲学、边界 |
 | [docs/dc-static.md](docs/dc-static.md) | **直流静态电路**：`EnumOutputs` 只能调一次的根因、两条取数路径、复现与排错顺序 |
-| [docs/mcp.md](docs/mcp.md) | **MCP Tool API**：7 个工具的输入输出、状态模型、错误码、自动布局、验收 |
+| [docs/mcp.md](docs/mcp.md) | **MCP Tool API**：8 个工具的输入输出、状态模型、统一返回对象、错误码、自动布局、验收 |
 | [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
 | [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
 | [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
@@ -564,13 +583,13 @@ runtime\py32\python.exe -u tools/nl_run.py --file examples/nl/dc_5v.txt
 | `I = V_R / R` | 0.005000 A | 0.005000 A |
 
 **电流不是理想电流探针测的**：Multisim 电压探针只给电压，`I` 是 `V_R / R`，
-其中 `R` 来自 Multisim 的 `RLCValue`（顺带验证 IR 写的 1000 与 Multisim 读的一致）。
+其中 `R` 是 Multisim 读回来的实际阻值（`r_source="multisim"`，顺带验证 IR 写的 1000 与读回的一致）。
 
 > ⚠️ **踩过的坑**：`EnumOutputs()`（`circ.probes()`）只能在 open 之后调一次。
 > 在 `run()` 之后、`read()` 之前再枚举一次，会让之后所有 `GetOutputData()`
 > 返回 `E_FAIL`，表现像"电路死了"。完整二分证据见 [docs/dc-static.md](docs/dc-static.md)。
 
-### 3.8 MCP Tool API：让 Agent 一步步建电路（v0.6.0）
+### 3.8 MCP Tool API：让 Agent 一步步建电路（v0.6.0 → v0.6.2）
 
 ```bash
 # 起 server（必须 32 位 Python，COM 限制）
@@ -580,14 +599,14 @@ runtime\py32\python.exe -u tools\mcp_server.py
 python tools\mcp_client.py
 
 # 会话层纯逻辑测试（不需要 Multisim）
-python tools\test_mcp_session.py      # 57 项
+python tools\test_mcp_session.py      # 78 项
 ```
 
 一次 RC 低通的完整调用序列（`tools/mcp_client.py` 里就是这么写的）：
 
 ```
 create_circuit(name="rc_lowpass_mcp")                       -> c-a580bc84c8
-add_component(SIGNAL_VOLTAGE_SOURCES, AC_VOLTAGE, V1, 1.0, frequency=1000)
+add_component(SIGNAL_VOLTAGE_SOURCES, AC_VOLTAGE, V1, 1.0, parameters={"frequency": 1000})
 add_component(RESISTOR, RESISTOR_VIRTUAL, R1, 1000)
 add_component(CAPACITOR, CAPACITOR_VIRTUAL, C1, 159e-9)
 add_component(POWER_SOURCES, GROUND, GND1)
@@ -596,9 +615,15 @@ connect([["R1","2"], ["C1","1"]])                           -> 自动命名 "n1"
 connect([["C1","2"], ["V1","-"], ["GND1","1"]])             -> 自动命名 "0"
 add_probe("in")                                             -> P1
 add_probe("R1.2")                                           -> P2（引脚自动解析成网络）
-simulate()                                                  -> transient, sim_id
-measure()                                                   -> 增益 0.706316 / 相位 -45.065°
+get_circuit()                                               -> 随时只读取回当前状态
+simulate()                                                  -> transient, sim_id, timing
+measure(probe_id="P2")                                      -> 增益 0.706316 / 相位 -45.065°
+get_waveform(probe_id="P2")                                 -> channels 的键同样是 "P2"
 ```
+
+**探针只有 `probe_id` 一个身份。** `P1` 是唯一语义 ID，`measure` / `get_waveform`
+的入参和 `channels` 的键都用它；`label`（`探针1`）/ `output`（`V(探针1)`）
+只是 Multisim 那边的只读旁证，用来在界面上核对，不用来传参。
 
 `simulate` 内部依次做：算布局 → 写回 IR → `validate()` → 编译 `.ms14` →
 开 Multisim → 读探针 → 落盘。**Agent 不需要给坐标，也不需要知道
@@ -728,9 +753,9 @@ multisim-ctrl/
 │   ├── ir_compile.py          ★ IR → .ms14（只调用已验证 API）
 │   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
 │   ├── circuit_session.py     ★★ MCP 会话层：句柄 / 语义参数 / 自动布局 / 结构化错误
-│   ├── mcp_server.py          ★★ MCP Server（JSON-RPC over stdio，7 个工具）
+│   ├── mcp_server.py          ★★ MCP Server（JSON-RPC over stdio，8 个工具）
 │   ├── mcp_client.py          ★ MCP 验收客户端（走真实协议，不调 Python 函数）
-│   ├── test_mcp_session.py    ★ 会话层测试：57 项，不需要 Multisim
+│   ├── test_mcp_session.py    ★ 会话层测试：78 项，不需要 Multisim
 │   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
 │   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
 │   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
@@ -812,10 +837,10 @@ multisim-ctrl/
   `I=V_R/R=0.005000 A`。中文验收句端到端跑通（`docs/dc-static.md`）
 - **COM 调用顺序**：`EnumOutputs` 在 `run()` 之后调会作废输出缓冲
   （二分证据 P0~P4 见 `out/dc/bisect_*.json`）
-- **MCP Tool API**：7 个工具走真实 JSON-RPC 协议，RC 低通增益 **0.706316** /
+- **MCP Tool API**：8 个工具走真实 JSON-RPC 协议，RC 低通增益 **0.706316** /
   相位 **−45.065°**（与 `nl_run` 的 0.70632 / −45.06° 一致），
   直流 5 V / 1000 Ω / 5 mA；48 项断言全过（`out/mcp/acceptance.json`）
-- **MCP 会话层**：57 项纯逻辑测试（`tools/test_mcp_session.py`），
+- **MCP 会话层**：78 项纯逻辑测试（`tools/test_mcp_session.py`），
   覆盖语义参数映射、自动网络命名、引脚冲突、探针上限、拓扑不支持的报错
 
 ### ⬜ 未验证（路线图见 [docs/next-steps.md](docs/next-steps.md)）

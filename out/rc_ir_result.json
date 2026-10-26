@@ -1,5 +1,5 @@
 {
-  "ir": "examples/rc_lowpass.ir.json",
+  "ir": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\examples\\rc_lowpass.ir.json",
   "ms14": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\ref\\rc_lowpass_ir.ms14",
   "freq": 1000.0,
   "rlc": {

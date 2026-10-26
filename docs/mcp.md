@@ -1,8 +1,13 @@
 # MCP Tool API —— 电路执行器
 
-> 版本：v0.6.0
+> 版本：**v0.6.2**（v0.6.0 首版 → v0.6.1 Agent 验收 → v0.6.2 接口一致性修整）
 > 定位：把已经验证过的 **Circuit IR + Multisim 执行链**包成一个 Agent 能直接用的接口。
 > 代码：`tools/circuit_session.py`（业务逻辑）+ `tools/mcp_server.py`（协议层）。
+>
+> v0.6.2 只做了一件事：**把 API 表面上的不一致清干净**。
+> 起因是一次外部 Agent 验收（见 `out/agent_test/AGENT_ACCEPTANCE_REPORT.md`）——
+> 主流程 13 次调用零错误，但暴露出 3 处"同一个概念两套命名"。
+> 这一版不碰 `ir_sim` / `ir_compile` / `msbuild` / `mssafe`，只改返回结构和 schema 文案。
 
 ---
 
@@ -18,7 +23,7 @@
 | 协议层 | `mcp_server.py` | JSON-RPC over stdio、tools/list、tools/call。**只做收发** |
 | 会话层 | `circuit_session.py` | 电路句柄、语义参数映射、唯一性检查、自动命名、**自动布局**、分析类型匹配、结构化错误 |
 
-会话层有真业务逻辑，所以它能单独测试（`test_mcp_session.py`，57 项，不需要 Multisim）。
+会话层有真业务逻辑，所以它能单独测试（`test_mcp_session.py`，78 项，不需要 Multisim）。
 协议层薄到没有分支逻辑，坏了很容易看出来。
 
 ---
@@ -56,7 +61,7 @@ sims/s-xxxxxxxxxx.ir.json  那次仿真用的 IR 快照
 
 ---
 
-## 3. 七个工具
+## 3. 八个工具
 
 ### `create_circuit`
 
@@ -77,14 +82,33 @@ sims/s-xxxxxxxxxx.ir.json  那次仿真用的 IR 快照
 
 | 元件 | Agent 传的 | 落到 IR 的 |
 | --- | --- | --- |
-| `AC_VOLTAGE` | `value=1.0, frequency=1000` | `value=1.0, params={5: 1000.0}` |
+| `AC_VOLTAGE` | `value=1.0, parameters={"frequency": 1000}` | `value=1.0, params={5: 1000.0}` |
 | `DC_POWER` | `value=5.0` | `value=5.0, params={}` |
 | `RESISTOR_VIRTUAL` | `value=1000` | `value=1000.0` |
 | `CAPACITOR_VIRTUAL` | `value=159e-9` | `value=1.59e-07` |
 | `GROUND` | （不给） | `value=None` |
 
-`params={5: 1000}` 里的 `5` 是 Multisim 的参数序号，Agent 永远看不到它 ——
-返回里会翻回 `"parameters": {"frequency": 1000.0}`。
+`params={5: 1000}` 里的 `5` 是 Multisim 的参数序号。**它在 MCP 边界上完全不存在**：
+
+| 情况 | 结果 |
+| --- | --- |
+| `parameters={"frequency": 1000}` | 正常 |
+| `frequency=1000`（便捷写法，等价） | 正常 |
+| `parameters={"frequency": 1000}` + `frequency=2000` | `BAD_ARGUMENT` —— 不猜以哪个为准 |
+| `parameters={"freq": 1000}` | `UNKNOWN_PARAMETER`，`context.supported` 列出可用参数 |
+| `params={"5": 1000}`（v0.6.0 的旧写法） | `UNSUPPORTED_PARAMETER`，hint 指向 `parameters` |
+
+返回的 `component` 是**固定 9 字段**，不会因为元件类型少字段：
+
+```json
+{"refdes": "V1", "family": "SIGNAL_VOLTAGE_SOURCES", "part": "AC_VOLTAGE",
+ "value": 1.0, "value_name": "amplitude", "value_unit": "V",
+ "parameters": {"frequency": 1000.0},
+ "pins": ["1", "2"], "aliases": {"+": "1", "-": "2"}}
+```
+
+`value_name` / `value_unit` 说明 `value` 到底是什么（幅值？阻值？容值？），
+不用 Agent 记。没有附加参数时 `parameters` 是 `{}` 而不是缺字段。
 
 第一版只开放这五种（都跑通过真机仿真）。传电感会得到
 `UNKNOWN_COMPONENT_TYPE` 并列出可用类型。
@@ -134,6 +158,25 @@ connect([["V1","-"]], "0")                   -> 追加到 "0"
 MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 上限 **9 个**（序号超过一位数字的命名规则没验证），第 10 个报 `PROBE_LIMIT`。
 
+**探针只有 `probe_id` 一个身份**（就是 `name` 给的那个，默认 `P1`）。
+`label`（`探针1`）和 `output`（`V(探针1)`）是 Multisim 那边的只读旁证，
+只出现在返回里，**永远不用来传参**。
+
+### `get_circuit`
+
+```json
+{"circuit_id": "c-..."}
+```
+
+只读，什么都不改。返回和 `create_circuit` / `add_component` / `connect` **完全相同**的快照结构。
+
+用途不是"跨会话兜底"这么窄 —— 复杂任务里 Agent 非常需要一句"我刚才到底搭成什么样了"：
+改完一轮核对、隔了几轮对话只记得 `circuit_id`、动手前先看看已经有什么。
+返回里带 `simulations` 列表，所以也能看到"这个电路跑过几次、每次是什么分析"。
+
+如果这个电路仿真过，`probes[]` 里的 `label` / `output` 会被填上（否则是 `null`）——
+从最近一次仿真记录里读，不需要重跑。
+
 ### `simulate`
 
 ```json
@@ -164,7 +207,21 @@ MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 `transient` 不传 `stop` / `sample_rate` 时按信号频率推算：6 个周期、每周期 200 点
 （和 `nl2ir` 的默认值一致，这个组合在真机上验证过）。
 
-返回里带 `sim_id`、`outputs`、`summary`（每通道 n/min/max/mean）、`record`、`waveform`。
+返回里带 `sim_id`、`outputs`、`probes`、`summary`（按 probe_id 键）、`record`、
+`waveform`、`timing`。
+
+**`timing` 是 v0.6.2 新加的**，因为 `simulate` 是阻塞的、实测单次 30 s 左右：
+
+```json
+"timing": {"layout_s": 0.001, "compile_s": 0.42, "run_s": 31.6, "total_s": 32.1}
+```
+
+Agent 拿到这个数就能判断"这个电路该给多少超时"，而不是靠猜。
+
+`timeout`（秒）是**软超时**：只在阶段之间（布局 / 编译 / 跑仿真）检查，
+**无法中断已经在进行的 Multisim COM 调用**。超了返回 `SIMULATION_TIMEOUT`，
+带上 `phase` 和 `elapsed_s`。把它写成硬超时需要把 COM 调用挪到可 kill 的线程里，
+属于重构 —— 等复杂电路真的把时间压到边界上再说。
 
 > ⚠️ **`EnumOutputs` 只在 open 后调一次**这条铁律封在 `ir_sim` 里，Agent 碰不到。
 > 见 [dc-static.md](dc-static.md)。
@@ -173,7 +230,7 @@ MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 
 ```json
 {"sim_id": "s-...", "what": "all"}
-{"sim_id": "s-...", "what": "amplitude", "probe": "P2"}
+{"sim_id": "s-...", "what": "amplitude", "probe_id": "P2"}
 ```
 
 | `what` | 返回 |
@@ -186,9 +243,14 @@ MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 
 `transient` 额外给 `gain`、`phase_deg`、`theory`；`dc` 给 `v_resistor`、`current`。
 
+`channels` 是**以 `probe_id` 为键**的对象，和 `get_waveform` 的 `channels` 完全一致。
+每个通道固定带 `probe_id` / `label` / `output` / `net` / `kind`，再叠加测量字段。
+**`what` 过滤不会删掉身份字段** —— 否则 `what="amplitude"` 之后 Agent 就不知道
+这个通道是哪个探针了。
+
 **拟合算法没有重写**，直接调 `ir_sim.fit_channels()`（最小二乘）。
-`dc` 的电流仍是 `I = V_R / R`，`R` 来自 Multisim 的 `RLCValue`，
-返回里用 `r_source` 字段标明来源，不假装用了电流探针。
+`dc` 的电流仍是 `I = V_R / R`，`R` 是 **Multisim 读回来的实际阻值**（不是从 IR 抄的），
+返回里用 `r_source` 标明来源（`multisim` / `ir`），不假装用了电流探针。
 
 `measure` 按**拓扑**找源网和地网，不依赖网络叫什么名字 —— 所以 Agent 把
 网络命名成 `vcc` / `gnd` 也能正确算出电阻电压。
@@ -196,15 +258,114 @@ MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 ### `get_waveform`
 
 ```json
-{"sim_id": "s-...", "probe": "V(探针1)", "max_points": 200}
+{"sim_id": "s-...", "probe_id": "P1", "max_points": 200}
 ```
 
 不会把整条波形塞进返回值。默认给摘要（`n` / `min` / `max` / `mean` / `t_range`）
 + 最多 `max_points` 个采样点的预览（均匀抽样），完整数据在 `artifact` 指向的 CSV。
 
+`channels` 和 `measure` 用同一套键（`probe_id`），两个工具的结果可以直接对照。
+
+> v0.6.0/v0.6.1 这里写的是 `probe`，描述还写成"输出名"，
+> 结果 Agent 传 `V(探针1)` 会失败 —— 这是 v0.6.1 验收里实际踩到的坑。
+> v0.6.2 改成 `probe_id`，并且**传错会明确告诉你该传什么**：
+>
+> ```json
+> {"code": "PROBE_NOT_FOUND",
+>  "message": "'V(探针1)' 是 Multisim 那边的名字，不是 probe_id",
+>  "hint": "probe_id 是 'P1'。measure / get_waveform 只接受 probe_id；"
+>          "label / output 是只读旁证，不要拿它传参。",
+>  "context": {"field": "probe_id", "value": "V(探针1)",
+>              "available": ["P1", "P2"], "matched": "P1"}}
+> ```
+
 ---
 
-## 4. 数据模型：MCP 层不暴露什么
+## 4. 统一的返回对象（v0.6.2 的修整）
+
+v0.6.1 的验收报告里，问题 1/2/3 是**同一种病**：同一个概念，两个工具给两种形状。
+Agent 写通用代码时只能每次特殊处理；一旦接上 LLM，这种不一致会变成
+"模型随机写错代码"，而且事后无法判断是 API 的问题还是模型的问题。
+
+所以 v0.6.2 把返回对象收敛成 4 个固定形状。**字段固定，不因类型而少字段** ——
+没有的值是 `null` / `{}` / `[]`，而不是字段消失。
+
+### 4.1 `component`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `refdes` | str | 位号 |
+| `family` / `part` | str | 元件类型 |
+| `value` | number\|null | 主值（地是 `null`） |
+| `value_name` | str\|null | 这个值**是什么**：`amplitude` / `voltage` / `resistance` / `capacitance` |
+| `value_unit` | str\|null | 单位：`V` / `ohm` / `F` |
+| `parameters` | object | 语义参数，`{}` 或 `{"frequency": 1000.0}` |
+| `pins` | str[] | 实际引脚名 |
+| `aliases` | object | 别名映射 `{"+": "1", "-": "2"}` |
+
+### 4.2 `probe` / `channel` —— 同一个形状
+
+`probes[]`（`simulate` / `get_circuit` / `measure` / `get_waveform`）
+和 `channels{}` 里的每一项都用它：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `probe_id` | str | **唯一语义 ID**，Agent 传参只认它 |
+| `label` | str\|null | Multisim 显示名（`探针1`），只读旁证 |
+| `output` | str\|null | COM 输出名（`V(探针1)`），只读旁证 |
+| `net` | str | 所在网络 |
+| `kind` | str | 目前只有 `V`（电压探针） |
+
+`channels` 是 **`{probe_id: channel}`**，`measure` 和 `get_waveform` 完全一致 ——
+两个工具的结果可以直接对照，不需要 Agent 自己建映射表。
+
+`label` / `output` 在 `simulate` 之前是 `null`（那时还没有 COM 输出名），
+但**字段一直在**，所以 Agent 的取值代码不用写 `if "label" in ch`。
+
+### 4.3 `net`
+
+`{name, pins}`。`connect` 额外在**顶层**给一个 `created` 布尔值（是不是新建的），
+不塞进 `net` 里 —— 这样 `net` 在所有工具里形状一致。
+
+### 4.4 错误的 `context`
+
+字段名和类型固定，Agent 可以写一份通用错误处理器：
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `field` | str | 出问题的参数名 |
+| `value` | any | 传进来的值 |
+| `supported` | str[] | 这个参数**能**取什么 |
+| `available` | str[] | 当前**可用**什么 |
+| `existing` | str[] | 已经存在的名字 |
+| `pins` / `nets` | str[] | 涉及的引脚（`R1.2`）/ 网络 |
+| `aliases` | object | 别名映射 |
+| `issues` | object[] | `validate()` 的问题列表 |
+| `refdes` / `pin` / `net` / `part` / `family` / `analysis` / `phase` | str | 定位 |
+| `count` / `limit` / `elapsed_s` / `timeout_s` | number | 数量与耗时 |
+
+规则只有一条：**同一个字段名，永远是同一个类型。**
+
+v0.6.1 反例（已修）：
+
+```json
+// UNKNOWN_COMPONENT_TYPE：supported 是数组
+"context": {"supported": ["SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE", ...]}
+
+// PIN_NOT_FOUND：available 却是嵌套对象
+"context": {"available": {"pins": ["1","2"], "aliases": {"+":"1"}}}
+```
+
+现在 `PIN_NOT_FOUND` 是：
+
+```json
+"context": {"refdes": "R1", "pin": "9",
+            "available": ["1", "2"], "aliases": {"+": "1", "-": "2"}}
+```
+
+---
+
+## 5. 数据模型：MCP 层不暴露什么
 
 `tools_schema.json` 里做过一条自动检查：**不出现** `CiID` / `CiPort` /
 `CIITSymbolComp` / `SimState`。
@@ -213,17 +374,23 @@ Agent 能看到的只有：
 
 ```
 circuit_id
-component   { refdes, family, part, value, parameters, pins, aliases }
-connection  { name, pins[] }
-probe       { name, net, kind, index }
+component   { refdes, family, part, value, value_name, value_unit,
+              parameters, pins, aliases }
+net         { name, pins[] }
+probe       { probe_id, label, output, net, kind }
+channel     { probe_id, label, output, net, kind, ...测量字段 }
 simulation  { analysis, start, stop, sample_rate }
 ```
 
 没有 donor 文件、没有坐标、没有 XML ID、没有参数序号。
 
+`label` / `output` 是 v0.6.2 里唯一带 Multisim 味道的字段，但它们**只读、只用来对照**，
+不参与寻址 —— 传参一律用 `probe_id`。这样 Agent 在 Multisim 界面上核对结果时有个抓手，
+又不会被迫理解 `EnumOutputs` 那套命名。
+
 ---
 
-## 5. 自动布局：坐标归底层管
+## 6. 自动布局：坐标归底层管
 
 `plan_layout()` 在 `simulate` 时按拓扑算坐标。第一版只支持**单电源串联链到地**，
 用的是 v0.3.0 / v0.5.0 在真机上验证过的那套：
@@ -248,7 +415,7 @@ simulation  { analysis, start, stop, sample_rate }
 
 ---
 
-## 6. 错误设计
+## 7. 错误设计
 
 每个错误都是 `{code, message, hint, context}`。`hint` 是**可执行**的建议，
 `context` 是机器可读的上下文 —— LLM 接进来之后能靠这两样自己纠正。
@@ -275,7 +442,7 @@ simulation  { analysis, start, stop, sample_rate }
 
 ---
 
-## 7. 验收（实测，真跑 Multisim）
+## 8. 验收（实测，真跑 Multisim）
 
 `tools/mcp_client.py` 起 server 子进程，**走真实 MCP 协议**（不是直接调 Python 函数），
 建两个电路：
@@ -287,7 +454,7 @@ simulation  { analysis, start, stop, sample_rate }
 | `create_circuit` | `c-a580bc84c8` |
 | 三个 `connect` 的自动命名 | `in` / `n1` / `0` |
 | 探针用引脚名指定 | `R1.2` → 自动解析到 `n1` |
-| `simulate` 自动选分析类型 | `transient`，30.1 s |
+| `simulate` 自动选分析类型 | `transient`，32.1 s（`timing.run_s`） |
 | Multisim 注册输出 | `['V(探针1)', 'V(探针2)']` |
 | **增益** | **0.706316**（`nl_run` 同电路 0.70632） |
 | **相位** | **−45.065°**（`nl_run` −45.06°） |
@@ -302,7 +469,7 @@ simulation  { analysis, start, stop, sample_rate }
 | 每个探针的采样点 | 1（直流工作点） |
 | `V(source)` / `V(ground)` | 5.000000 / 0.000000 |
 | 电阻两端电压 | 5.000000 |
-| `R` | 1000.0（来源：Multisim `RLCValue`） |
+| `R` | 1000.0（`r_source="multisim"`，Multisim 读回值） |
 | **电流** | **0.005000 A** |
 
 ### 错误路径
@@ -316,11 +483,22 @@ simulation  { analysis, start, stop, sample_rate }
 | `AC_VOLTAGE` 缺 `frequency` | `MISSING_PARAMETER`（`context.field="frequency"`） |
 | 跨网络硬连 | `PIN_ALREADY_CONNECTED` |
 
-**48 项断言全部通过**，结果落在 `out/mcp/acceptance.json`。
+### v0.6.2 新增的一致性断言
+
+| 检查项 | 结果 |
+| --- | --- |
+| `measure` 与 `get_waveform` 的 `channels` 键 | 都是 `['P1','P2']` |
+| `what="amplitude"` 之后身份字段 | 仍在（`probe_id` / `label` / `output`） |
+| `probe_id="P2"` 过滤 | 只剩 `P2` |
+| 通道上的 Multisim 旁证 | `label=探针2`、`output=V(探针2)` |
+| `get_circuit` 读回 | 4 元件 / 3 网络 / 2 探针 |
+| 仿真后 `get_circuit` 的 `probes[].output` | `['V(探针1)','V(探针2)']`（不用重跑） |
+
+**55 项断言全部通过**，结果落在 `out/mcp/acceptance.json`。
 
 ---
 
-## 8. 怎么接 Agent
+## 9. 怎么接 Agent
 
 server 必须用 **32 位 Python**（COM 限制）：
 
@@ -344,12 +522,12 @@ python tools/mcp_client.py
 纯逻辑测试（不需要 Multisim，任意位数 Python）：
 
 ```bash
-python tools/test_mcp_session.py      # 57 项
+python tools/test_mcp_session.py      # 78 项
 ```
 
 ---
 
-## 9. 第一版边界（明确不做）
+## 10. 第一版边界（明确不做）
 
 | 不做 | 原因 |
 | --- | --- |
@@ -361,10 +539,22 @@ python tools/test_mcp_session.py      # 57 项
 | 交流扫频 / 蒙特卡洛 / 温度扫描 | COM 侧取数路径未验证 |
 | LLM / 自然语言入口 | 先把执行 API 稳定下来。NL 那条线走 `nl2ir`，和 MCP 是并行的两个入口 |
 | `RESISTOR_RATED` | 未验证 |
+| `simulate` 的**硬**超时 | 需要把 COM 调用挪到可 kill 的线程，属重构；v0.6.2 只做软超时 + `timing` |
+| MCP `progress` 通知 | 协议侧要发 `notifications/progress`，客户端要能处理通知；**接口位置已留好**（`simulate` 的 `timeout` / `timing`），等实测到 60 s、120 s、300 s 的真实分布再决定要不要做 |
+
+### 关于 `simulate` 耗时（v0.6.2 的判断）
+
+实测单次 **30 s 左右**（`timing.run_s` 占 98%，编译不到 0.5 s）。
+很多 MCP 客户端默认超时是 60 s，所以这个数值得警惕 —— 但**不值得现在就重构**：
+
+1. 现在电路只有 1~2 个无源元件，30 s 基本是 Multisim 启停的固定开销，不是规模问题
+2. 先把 `timing` 暴露出去，让 Agent 和人都能看见时间花在哪
+3. 等 P2（并联）、P3（运放/555）做完，再测 30 s / 60 s / 120 s / 300 s 的分布，
+   那时才知道该做硬超时、还是该做异步 + 轮询
 
 ---
 
-## 10. 两条入口的关系
+## 11. 两条入口的关系
 
 ```
                     自由中文
@@ -375,7 +565,7 @@ python tools/test_mcp_session.py      # 57 项
                        ▼
   Agent ──MCP──►  Circuit IR  ◄── circuit_session
    │                │
-   └── 七个工具 ─────┘
+   └── 八个工具 ─────┘
                     ▼
                  msbuild
                     ▼

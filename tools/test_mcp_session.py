@@ -127,7 +127,7 @@ def main():
         r = S.connect(cid, [["V1", "+"], ["R1", "1"]])
         check("含电源正极的网络自动叫 'in'", r["net"]["name"] == "in",
               r["net"]["name"])
-        check("网络是新建的", r["net"]["created"] is True)
+        check("网络是新建的", r["created"] is True)
 
         r = S.connect(cid, ["R1.2", "C1.1"])
         check("中间网络自动叫 n1", r["net"]["name"] == "n1", r["net"]["name"])
@@ -137,7 +137,7 @@ def main():
 
         # 追加引脚到已有网络（Agent 逐条描述连线的习惯）
         r = S.connect(cid, [["V1", "-"], ["GND1", "1"]], net="0")
-        check("往已有网络追加引脚", r["net"]["created"] is False
+        check("往已有网络追加引脚", r["created"] is False
               and set(r["net"]["pins"]) >= {"C1.2", "V1.2", "GND1.1"},
               str(r["net"]["pins"]))
         check("追加不产生重复引脚",
@@ -146,7 +146,7 @@ def main():
 
         r = S.connect(cid, [["C1", "2"]])
         check("单个引脚自动并回它所在的网络",
-              r["net"]["name"] == "0" and r["net"]["created"] is False,
+              r["net"]["name"] == "0" and r["created"] is False,
               str(r["net"]))
 
         expect_err("引脚已属于别的网络",
@@ -166,12 +166,12 @@ def main():
         print("\n[4] add_probe：目标解析")
         r = S.add_probe(cid, "in")
         check("按网络名加探针", r["probe"]["net"] == "in"
-              and r["probe"]["name"] == "P1", str(r["probe"]))
+              and r["probe"]["probe_id"] == "P1", str(r["probe"]))
         r = S.add_probe(cid, "R1.2")
         check("按引脚名加探针（自动找网络）", r["probe"]["net"] == "n1",
               str(r["probe"]))
         r = S.add_probe(cid, "0", name="GND_PROBE")
-        check("显式命名", r["probe"]["name"] == "GND_PROBE", str(r["probe"]))
+        check("显式命名", r["probe"]["probe_id"] == "GND_PROBE", str(r["probe"]))
 
         expect_err("目标给元件名 -> 要求明确到引脚",
                    lambda: S.add_probe(cid, "R1"), "AMBIGUOUS_TARGET",
@@ -288,6 +288,104 @@ def main():
         check("delete_circuit 生效",
               not os.path.isdir(os.path.join(tmp, pid)))
 
+        # ---------------------------------------------------------------- 12
+        print("\n[12] v0.6.2：parameters 只认语义名，params 直接拒绝")
+        pc = S.create_circuit("params")
+        pcid = pc["circuit_id"]
+        r = S.add_component(pcid, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                            value=2.0, parameters={"frequency": 2000.0})
+        check("parameters 写法生效",
+              r["component"]["parameters"] == {"frequency": 2000.0},
+              str(r["component"]["parameters"]))
+        check("component 带 value_name / value_unit",
+              (r["component"]["value_name"], r["component"]["value_unit"])
+              == ("amplitude", "V"),
+              str((r["component"]["value_name"], r["component"]["value_unit"])))
+        check("没有额外参数时 parameters 是 {}（不是缺失）",
+              "parameters" in S.add_component(
+                  pcid, "RESISTOR", "RESISTOR_VIRTUAL", "R1",
+                  value=1000.0)["component"],
+              "字段存在")
+        expect_err("params（数字序号）被拒绝",
+                   lambda: S.add_component(pcid, "SIGNAL_VOLTAGE_SOURCES",
+                                           "AC_VOLTAGE", "V4", value=1.0,
+                                           params={"5": 1000}),
+                   "UNSUPPORTED_PARAMETER", "parameters")
+        expect_err("未知语义参数 -> 列出可用参数",
+                   lambda: S.add_component(pcid, "SIGNAL_VOLTAGE_SOURCES",
+                                           "AC_VOLTAGE", "V5", value=1.0,
+                                           parameters={"freq": 1000}),
+                   "UNKNOWN_PARAMETER", "frequency")
+        expect_err("parameters 与 frequency 同时给 -> 不猜",
+                   lambda: S.add_component(pcid, "SIGNAL_VOLTAGE_SOURCES",
+                                           "AC_VOLTAGE", "V6", value=1.0,
+                                           parameters={"frequency": 1000},
+                                           frequency=2000),
+                   "BAD_ARGUMENT")
+        e2 = None
+        try:
+            S.add_component(pcid, "RESISTOR", "RESISTOR_VIRTUAL", "R8", value=-5)
+        except S.SessionError as ex:
+            e2 = ex
+        check("错误 context 不再嵌套一层 context",
+              e2 is not None and "context" not in e2.context,
+              str(e2.context if e2 else None))
+
+        # ---------------------------------------------------------------- 13
+        print("\n[13] v0.6.2：探针身份统一为 probe_id")
+        gc = S.get_circuit(cid)
+        pr0 = gc["probes"][0]
+        check("probes[] 是固定 5 字段",
+              set(pr0) == {"probe_id", "label", "output", "net", "kind"},
+              str(sorted(pr0)))
+        check("没仿真时 label / output 是 None（字段仍在）",
+              pr0["label"] is None and pr0["output"] is None, str(pr0))
+        check("component 字段固定 9 项",
+              set(gc["components"][0]) == {
+                  "refdes", "family", "part", "value", "value_name",
+                  "value_unit", "parameters", "pins", "aliases"},
+              str(sorted(gc["components"][0])))
+
+        sid = _fake_sim(cid)
+        w = S.get_waveform(sid)
+        check("get_waveform.channels 用 probe_id 作键",
+              set(w["channels"]) == {"P1", "P2"}, str(sorted(w["channels"])))
+        ch = w["channels"]["P1"]
+        check("通道带 label / output / net（只读旁证）",
+              (ch["label"], ch["output"], ch["net"]) == ("探针1", "V(探针1)", "in"),
+              str({k: ch[k] for k in ("label", "output", "net")}))
+        check("probe_id 过滤只留一个通道",
+              set(S.get_waveform(sid, probe_id="P2")["channels"]) == {"P2"})
+
+        e = expect_err("传 Multisim 输出名 -> hint 直接给出正确 probe_id",
+                       lambda: S.get_waveform(sid, probe_id="V(探针1)"),
+                       "PROBE_NOT_FOUND", "probe_id 是 'P1'")
+        check("错误里带 matched 字段",
+              e is not None and e.context.get("matched") == "P1",
+              str(e.context if e else None))
+        expect_err("传 Multisim 显示名 -> 同样纠正",
+                   lambda: S.get_waveform(sid, probe_id="探针1"),
+                   "PROBE_NOT_FOUND", "probe_id 是 'P1'")
+        expect_err("measure 的 probe_id 是同一套语义",
+                   lambda: S.measure(sid, probe_id="V(探针2)"),
+                   "PROBE_NOT_FOUND", "probe_id 是 'P2'")
+        expect_err("measure 的 probe_id 不存在",
+                   lambda: S.measure(sid, probe_id="P9"),
+                   "PROBE_NOT_FOUND", "P1")
+
+        # 兼容 v0.6.0/v0.6.1 写的旧记录（探针键叫 name）
+        legacy = _fake_sim(cid, legacy=True)
+        check("旧格式仿真记录仍可读（probes[].name）",
+              set(S.get_waveform(legacy)["channels"]) == {"P1", "P2"},
+              str(sorted(S.get_waveform(legacy)["channels"])))
+
+        # ---------------------------------------------------------------- 14
+        print("\n[14] v0.6.2：simulate 的 timeout 参数校验（不真的跑 COM）")
+        expect_err("timeout 非数字",
+                   lambda: S.simulate(cid, timeout="abc"), "BAD_ARGUMENT")
+        expect_err("timeout <= 0",
+                   lambda: S.simulate(cid, timeout=0), "BAD_ARGUMENT")
+
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -297,6 +395,49 @@ def main():
           % (npass, nfail, "PASS" if nfail == 0 else "FAIL"))
     print("-" * 80)
     return 0 if nfail == 0 else 1
+
+
+def _fake_sim(cid, legacy=False):
+    """造一个仿真记录 + CSV，专测 measure / get_waveform 的通道语义。
+
+    不需要 Multisim：探针过滤和 get_waveform 的全部逻辑都在正弦拟合之前，
+    所以 64 位 Python 也能跑。`legacy=True` 时探针键写成 v0.6.1 的 `name`，
+    用来验证旧记录仍然读得出来。
+    """
+    import csv as _csv
+    import json as _json
+
+    sims = os.path.join(S.SESS_ROOT, cid, "sims")
+    os.makedirs(sims, exist_ok=True)
+    sid = "s-0f1e2d3c4b" if not legacy else "s-1a2b3c4d5e"
+    csv_path = os.path.join(sims, "%s.csv" % sid)
+    with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+        w = _csv.writer(fh)
+        w.writerow(["t", "V(探针1)", "V(探针2)"])
+        for i in range(100):
+            w.writerow(["%.9g" % (i * 5e-6), "%.9g" % (1.0 - i * 0.01),
+                        "%.9g" % (0.5 - i * 0.001)])
+
+    probes = [
+        {"label": "探针1", "output": "V(探针1)", "net": "in", "probe_id": "P1"},
+        {"label": "探针2", "output": "V(探针2)", "net": "n1", "probe_id": "P2"},
+    ]
+    if legacy:
+        probes = [{"name": p["probe_id"], "output": p["output"], "net": p["net"]}
+                  for p in probes]
+
+    rec = {
+        "sim_id": sid, "circuit_id": cid, "analysis": "transient",
+        "status": "ok", "created": "2026-01-01T00:00:00",
+        "outputs": ["V(探针1)", "V(探针2)"], "probes": probes,
+        "sample_rate": 200000.0, "stop": 5e-4, "n": 100,
+        "ir_snapshot": os.path.join(S.SESS_ROOT, cid, "circuit.ir.json"),
+        "waveform": csv_path,
+        "summary": {}, "timing": {}, "compile": {},
+    }
+    with open(os.path.join(sims, "%s.json" % sid), "w", encoding="utf-8") as fh:
+        _json.dump(rec, fh, ensure_ascii=False, indent=2)
+    return sid
 
 
 def _fresh_no_probe(tmp):
