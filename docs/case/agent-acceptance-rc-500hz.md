@@ -39,12 +39,19 @@
 
 ## 二、电路
 
-![电路结构](https://raw.githubusercontent.com/A3-77/multisim-14.3-ai-automation/main/docs/case/agent_rc_500hz_circuit.png)
+**Multisim 的真实输出，原样贴上来，没裁剪没重绘：**
 
-这张图不是 Multisim 的截图，而是从**那次 MCP 会话的数据**重新绘制的
-（`out/mcp/sessions/c-eccf480d70/circuit.ir.json`：元件、引脚、网络名、探针位置全部来自文件）。
+![Multisim 截图](https://raw.githubusercontent.com/A3-77/multisim-14.3-ai-automation/main/docs/case/agent_rc_500hz_multisim_render.png)
 
-值得注意的地方：
+R1 和两个探针画出来了，**V1 和 C1 的符号是空的**。
+这是 Multisim `GetCircuitImage` 对我们生成的 `.ms14` 的渲染缺陷，
+不是电路接错了 —— 仿真照跑、读数照对（见下面问题 8）。
+
+> 如果只想看接法，附一张按同一份会话数据画的结构图（**可选项，默认不生成**）：
+
+![电路结构（可选，按会话数据重绘）](https://raw.githubusercontent.com/A3-77/multisim-14.3-ai-automation/main/docs/case/agent_rc_500hz_circuit.png)
+
+从这张图能看出几件事：
 
 - Agent **没有指定任何坐标**。它只说"V1 的 `+` 接 R1 的 `1`"，
   布局、走线、探针几何全部由后端完成
@@ -143,9 +150,7 @@ get_waveform(sim_id=..., max_points=20)              -> 摘要 + artifact
 
 ### 问题 8 的证据
 
-![Multisim 渲染缺陷](https://raw.githubusercontent.com/A3-77/multisim-14.3-ai-automation/main/docs/case/agent_rc_500hz_multisim_render.png)
-
-Multisim 自己导出的图：R1 和两个探针画出来了，**V1 和 C1 的符号是空的**，只剩导线框架。
+就是上面「二、电路」那张图：R1 和两个探针画出来了，**V1 和 C1 的符号是空的**，只剩导线框架。
 
 排查结论（细节见报告）：不是时序问题（立即导出与等 4 s 字节数相同）、
 不是 XML 缺元素（4 个 `CIITSymbolComp` 都有 `Objects` 子节点）、
