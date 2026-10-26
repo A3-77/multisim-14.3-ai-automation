@@ -9,6 +9,10 @@ venv/
 out/*
 !out/ref/
 !out/ref/**
+# 验收证据（README 直接引用，必须能被点开）
+!out/p0_validation.json
+!out/p0_waveform_source.csv
+!out/p0_waveform_divider.csv
 
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/

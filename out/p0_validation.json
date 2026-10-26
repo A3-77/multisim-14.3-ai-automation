@@ -1,0 +1,104 @@
+{
+  "runs": {
+    "source": {
+      "label": "source",
+      "file": "out\\ref\\acceptance.ms14",
+      "timestamp": "2026-10-26T12:53:24",
+      "expect_v": 5.0,
+      "transient_seconds": 0.01,
+      "components": [
+        "C1",
+        "R1",
+        "V1"
+      ],
+      "outputs": [
+        "V(探针1)"
+      ],
+      "rlc": {
+        "R1": 1000.0,
+        "R2": null,
+        "C1": 1e-12,
+        "V1": null
+      },
+      "v_stats": {
+        "V(探针1)": {
+          "n": 2000,
+          "min": 4.999999999999999,
+          "max": 5.000000000000001,
+          "span": 1.7763568394002505e-15,
+          "first": 5.0,
+          "last": 5.0,
+          "mean": 5.0
+        }
+      },
+      "state_after": "stopped",
+      "last_error": "带 RefDes 'V1'  的元器件不被该函数所支持。",
+      "csv": "out\\p0_waveform_source.csv",
+      "checks": {
+        "v_ok": true,
+        "r1_ok": true,
+        "v_output": "V(探针1)",
+        "v_mean": 5.0,
+        "v_span": 1.7763568394002505e-15,
+        "r1": 1000.0
+      },
+      "pass": true,
+      "errors": [
+        "RLCValue(R2): com_error(-2147467259, '未指定的错误', None, None)",
+        "RLCValue(V1): com_error(-2147467259, '未指定的错误', None, None)"
+      ],
+      "multisim_version": "Multisim 14.3"
+    },
+    "divider": {
+      "label": "divider",
+      "file": "out\\ref\\acceptance_divider.ms14",
+      "timestamp": "2026-10-26T12:53:29",
+      "expect_v": 2.5,
+      "transient_seconds": 0.01,
+      "components": [
+        "C1",
+        "R1",
+        "R2",
+        "V1"
+      ],
+      "outputs": [
+        "V(探针1)"
+      ],
+      "rlc": {
+        "R1": 1000.0,
+        "R2": 1000.0,
+        "C1": 1e-12,
+        "V1": null
+      },
+      "v_stats": {
+        "V(探针1)": {
+          "n": 2000,
+          "min": 2.4999999987499995,
+          "max": 2.499999998750001,
+          "span": 1.3322676295501878e-15,
+          "first": 2.49999999875,
+          "last": 2.4999999987500003,
+          "mean": 2.499999998750005
+        }
+      },
+      "state_after": "stopped",
+      "last_error": "带 RefDes 'V1'  的元器件不被该函数所支持。",
+      "csv": "out\\p0_waveform_divider.csv",
+      "checks": {
+        "v_ok": true,
+        "r1_ok": true,
+        "v_output": "V(探针1)",
+        "v_mean": 2.499999998750005,
+        "v_span": 1.3322676295501878e-15,
+        "r1": 1000.0
+      },
+      "pass": true,
+      "errors": [
+        "RLCValue(V1): com_error(-2147467259, '未指定的错误', None, None)"
+      ],
+      "multisim_version": "Multisim 14.3"
+    }
+  },
+  "timestamp": "2026-10-26T12:53:29",
+  "all_pass": true
+}
