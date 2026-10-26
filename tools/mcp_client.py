@@ -347,8 +347,11 @@ def error_paths(cli, rc_cid):
     e = p.get("error") or {}
     check("并联 -> LAYOUT_UNSUPPORTED", e.get("code") == "LAYOUT_UNSUPPORTED",
           e.get("code"))
-    check("错误里指出分叉在哪", bool(e.get("context", {}).get("branches")),
-          str(e.get("context", {}).get("branches")))
+    ctx = e.get("context", {})
+    check("错误里标明是哪一类并联（reason=parallel_shunt）",
+          ctx.get("reason") == "parallel_shunt", str(ctx.get("reason")))
+    check("错误里点名是哪几个元件并联到地",
+          ctx.get("shunts") == ["R1", "R2"], str(ctx.get("shunts")))
 
     # 3) 探针目标给元件位号
     p, is_err = cli.call("add_probe", circuit_id=rc_cid, target="R1")

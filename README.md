@@ -1,5 +1,35 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## 🌿 v0.7.0（2026-10-26）：P2 分支感知布局 —— 让二阶电路真的跑起来
+>
+> v0.6.1 的第二次 Agent 验收卡在一个很具体的地方：Agent **正确建出了**
+> 二阶 RC 梯形（6 元件 / 4 网络 / 2 探针，零错误），但 `simulate` 报
+> `LAYOUT_UNSUPPORTED` —— 后端布局只认单链。
+>
+> v0.7.0 把布局拆成两步，**拓扑判断先于坐标布局**：
+>
+> ```
+> Circuit IR → layout.analyze() → Topology → layout.plan() → 坐标
+> ```
+>
+> | 项 | 结果 |
+> | --- | --- |
+> | 支持的拓扑 | `shunt_load` / `series_chain` / `divider` / `bypass` / `tee` / `ladder` |
+> | 明确拒绝 | 真正的并联支路（`fork`）、并联到地（`parallel_shunt`）、悬空（`island`）、环路、多电源 |
+> | 同一个 `run_task2.py`（一行没改） | 第 17 步 `simulate` 从**被拒**变成**跑出数** |
+> | 二阶 RC 实测 | 增益 **0.583062**、相位 **−64.705°**（理论 0.584342 / −64.581°，误差 −0.219% / −0.123°） |
+> | 状态快照新增 `topology` | Agent 能在 `simulate` 之前就看到后端怎么理解它的电路 |
+>
+> 回归：`test_layout` **51/51**（新增）、`test_mcp_session` **96/96**、
+> MCP 真实协议验收 **56/56**、`test_mssafe` 4/4、`test_nl2ir` 59/59、
+> `ir_run` 增益 Δ=**0.00e+00**。
+>
+> 顺带踩到一个真 bug 并写进文档：坐标不影响网表，但**导线横穿别的符号框**
+> 会让 Multisim 少认一个探针通道（表现为"仿真成功但只有一个通道有数"）。
+> 详见 [docs/layout.md](docs/layout.md) 第 6 节。
+>
+> ---
+>
 > ## 🧹 v0.6.2（2026-10-26）：API 一致性修整 —— 让 Agent 不用猜
 >
 > v0.6.1 的验收证明了「Agent 能用」，但也暴露了 3 处**同一个概念两套命名**。
@@ -90,7 +120,7 @@
 > | 理论 | 0.70745 | −44.97° |
 >
 > 直流：`V(source)=5.000000`、`V(ground)=0.000000`、`R=1000.0`（Multisim `RLCValue`）、
-> `I=0.005000 A`。**48 项断言全过**，走的是真实 MCP 协议（起子进程、JSON-RPC）。
+> `I=0.005000 A`。**56 项断言全过**，走的是真实 MCP 协议（起子进程、JSON-RPC）。
 >
 > 细节：**`docs/mcp.md`**
 >
@@ -280,6 +310,7 @@
 | [docs/nl2ir.md](docs/nl2ir.md) | **中文 → Circuit IR**：支持的句式、解析算法、错误哲学、边界 |
 | [docs/dc-static.md](docs/dc-static.md) | **直流静态电路**：`EnumOutputs` 只能调一次的根因、两条取数路径、复现与排错顺序 |
 | [docs/mcp.md](docs/mcp.md) | **MCP Tool API**：8 个工具的输入输出、状态模型、统一返回对象、错误码、自动布局、验收 |
+| [docs/layout.md](docs/layout.md) | **分支感知布局（P2）**：拓扑判断先于坐标布局、6 类模板、拒绝规则、坐标网格、一次真实的几何 bug |
 | [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
 | [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
 | [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
@@ -589,7 +620,7 @@ runtime\py32\python.exe -u tools/nl_run.py --file examples/nl/dc_5v.txt
 > 在 `run()` 之后、`read()` 之前再枚举一次，会让之后所有 `GetOutputData()`
 > 返回 `E_FAIL`，表现像"电路死了"。完整二分证据见 [docs/dc-static.md](docs/dc-static.md)。
 
-### 3.8 MCP Tool API：让 Agent 一步步建电路（v0.6.0 → v0.6.2）
+### 3.8 MCP Tool API：让 Agent 一步步建电路（v0.6.0 → v0.7.0）
 
 ```bash
 # 起 server（必须 32 位 Python，COM 限制）
@@ -598,8 +629,9 @@ runtime\py32\python.exe -u tools\mcp_server.py
 # 确定性验收：起子进程、走真实 MCP 协议、建 RC 与 DC 两个电路
 python tools\mcp_client.py
 
-# 会话层纯逻辑测试（不需要 Multisim）
-python tools\test_mcp_session.py      # 78 项
+# 纯逻辑测试（不需要 Multisim）
+python tools\test_mcp_session.py      # 96 项（会话层）
+python tools\test_layout.py           # 51 项（拓扑 + 坐标）
 ```
 
 一次 RC 低通的完整调用序列（`tools/mcp_client.py` 里就是这么写的）：
@@ -672,6 +704,49 @@ MCP 建好之后，做了一次**不看源码的验收**：一个只读过 `tool
 > **画不出 V1/C1 符号**（自带样例正常，让 Multisim 自己另存再打开也一样）。
 > 不影响仿真，但影响"给人看"，已记为待修项。
 
+### 3.10 P2 分支感知布局：二阶 RC 真的跑起来了（v0.7.0）
+
+第二次 Agent 验收（3.9 之后的二阶题）暴露的不是 API 问题，而是**后端布局**：
+
+```json
+{"code": "LAYOUT_UNSUPPORTED",
+ "message": "网络 'n1' 有 2 个分支（C1.1, R2.1）",
+ "hint": "第一版只支持串联链；并联 / 多支路的布局还没验证过。",
+ "context": {"net": "n1", "branches": ["C1.1", "R2.1"]}}
+```
+
+v0.7.0 把 `plan_layout()` 换成 `layout.py`，并把两件事分开：
+
+- `analyze()` —— 纯图论，判断"这是什么拓扑、属于哪个模板"，不认识坐标；
+- `plan()` —— 只算坐标，不认识电路语义。
+
+**同一个 `out/agent_test2/run_task2.py`，一行没改**，第 17 步直接跑通：
+
+| 项 | 实测 | 理论 | 误差 |
+| --- | --- | --- | --- |
+| R1 / R2 | 10 kΩ / 10 kΩ | — | E12 标准值 |
+| C1 / C2 | 8.2 nF / 8.2 nF | — | E12 标准值 |
+| fc | 1940.914 Hz | 目标 2000 Hz | −2.95%（设计偏差） |
+| 输出幅值 | 0.581193 V | 0.584342 V | — |
+| 增益 | **0.583062** | **0.584342** | **−0.219 %** |
+| 相位 | **−64.705°** | **−64.581°** | **−0.123°** |
+
+后端自己给出的拓扑判断（`get_circuit` / `simulate` 都带 `topology`）：
+
+```json
+{"kind": "ladder", "n_series": 2, "n_shunt": 2, "out_net": "n2",
+ "stages": [{"index": 0, "net": "in", "series": "R1", "shunt": null},
+            {"index": 1, "net": "n1", "series": "R2", "shunt": "C1"},
+            {"index": 2, "net": "n2", "series": null, "shunt": "C2"}],
+ "supported": true}
+```
+
+三引脚节点 `n1` 现在是**正常的一级**，不再是异常。
+
+完整设计（支持的 6 类模板、拒绝规则、坐标网格、一次真实的几何 bug）见
+[docs/layout.md](docs/layout.md)，逐项报告见
+[out/agent_test2/REPORT.md](out/agent_test2/REPORT.md)。
+
 ---
 
 ## 四、环境依赖
@@ -737,6 +812,7 @@ multisim-ctrl/
 │   ├── deadends.md            死路清单与避坑
 │   ├── dc-static.md           直流静态电路：EnumOutputs 只能调一次的根因
 │   ├── mcp.md                 MCP Tool API：工具表 / 错误码 / 自动布局
+│   ├── layout.md              ★ 分支感知布局（P2）：拓扑模板 / 拒绝规则 / 坐标网格
 │   ├── next-steps.md          路线图
 │   ├── api.md                 COM API 全表（旧路线留存）
 │   ├── case/                  ★ Agent Acceptance Test 案例（题目 + 电路图 + 波形图）
@@ -752,10 +828,12 @@ multisim-ctrl/
 │   ├── circuit_ir.py          ★ Circuit IR 数据模型 + 校验（纯 JSON，无 XML 概念）
 │   ├── ir_compile.py          ★ IR → .ms14（只调用已验证 API）
 │   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
-│   ├── circuit_session.py     ★★ MCP 会话层：句柄 / 语义参数 / 自动布局 / 结构化错误
+│   ├── circuit_session.py     ★★ MCP 会话层：句柄 / 语义参数 / 结构化错误
+│   ├── layout.py              ★★ 拓扑分析 + 坐标（analyze 判拓扑、plan 算坐标）
 │   ├── mcp_server.py          ★★ MCP Server（JSON-RPC over stdio，8 个工具）
 │   ├── mcp_client.py          ★ MCP 验收客户端（走真实协议，不调 Python 函数）
-│   ├── test_mcp_session.py    ★ 会话层测试：78 项，不需要 Multisim
+│   ├── test_mcp_session.py    ★ 会话层测试：96 项，不需要 Multisim
+│   ├── test_layout.py         ★ 拓扑层测试：51 项，纯逻辑
 │   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
 │   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
 │   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
@@ -839,16 +917,29 @@ multisim-ctrl/
   （二分证据 P0~P4 见 `out/dc/bisect_*.json`）
 - **MCP Tool API**：8 个工具走真实 JSON-RPC 协议，RC 低通增益 **0.706316** /
   相位 **−45.065°**（与 `nl_run` 的 0.70632 / −45.06° 一致），
-  直流 5 V / 1000 Ω / 5 mA；48 项断言全过（`out/mcp/acceptance.json`）
-- **MCP 会话层**：78 项纯逻辑测试（`tools/test_mcp_session.py`），
+  直流 5 V / 1000 Ω / 5 mA；56 项断言全过（`out/mcp/acceptance.json`）
+- **MCP 会话层**：96 项纯逻辑测试（`tools/test_mcp_session.py`），
   覆盖语义参数映射、自动网络命名、引脚冲突、探针上限、拓扑不支持的报错
+- **分支感知布局（P2）**：`tools/layout.py` + 51 项纯逻辑测试
+  （`tools/test_layout.py`）。6 类拓扑模板全部识别正确
+  （`shunt_load` / `series_chain` / `divider` / `bypass` / `tee` / `ladder`），
+  5 类不支持的拓扑全部明确拒绝并给出 `context.reason`
+- **二阶 RC 梯形真机验收**：同一个 `out/agent_test2/run_task2.py`（**一行没改**），
+  `simulate` 从被拒变成跑出数 —— 增益 **0.583062**（理论 0.584342，误差 −0.219%）、
+  相位 **−64.705°**（理论 −64.581°，误差 −0.123°），1200 点 / 26.8 s
+- **坐标不影响网表**：一阶 RC 与直流电路换到新网格后读数与旧网格**逐位一致**
+  （`mcp_client` 56 项断言全过）；同时实测到一条边界 ——
+  导线横穿别的符号框会让 Multisim 少认一个探针通道（`docs/layout.md` 第 6 节）
 
 ### ⬜ 未验证（路线图见 [docs/next-steps.md](docs/next-steps.md)）
 
 - `RESISTOR_RATED` / `CAPACITOR_RATED`（family `RATED_VIRTUAL`）路线
 - 运放、555 等多引脚元件的通用 `add_part` 支持
 - 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
-- **并联 / 多支路拓扑**：布局与连线未验证
+- **真正的并联支路 / 并联到地 / 反馈 / 桥接**：P2 是明确拒绝（`fork` /
+  `parallel_shunt`），不是排不出来。网表本来就能表达，缺的是"两条并排支路
+  怎么摆才看得懂、且不穿符号"
+- **主干超过 4 级、多电源**：同上，明确拒绝
 
 ### ❓ 已知未知
 

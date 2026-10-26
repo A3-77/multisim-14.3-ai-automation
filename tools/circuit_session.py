@@ -16,10 +16,17 @@ MCP 协议层（`mcp_server.py`）只负责 JSON-RPC 收发。真正的业务逻
 为什么坐标由这里决定
 --------------------
 `add_component` / `connect` 只接受电路语义。坐标是 Multisim 的渲染细节，
-由 `plan_layout()` 在 `simulate()` 时按拓扑算出来再写进 IR。
-第一版只支持"单电源串联链到地"——这套坐标是 v0.3.0/v0.5.0 在真机上
-验证过的（源 300,300 / 第 1 个无源 500,300 / 第 2 个 700,400 / 地 300,420）。
-拓扑不是串联链时**明确报错**，而不是硬排一个没验证过的布局。
+由 `layout.plan_ir()` 在 `simulate()` 时按拓扑算出来再写进 IR。
+
+**拓扑判断先于坐标布局**（v0.7.0 起）：`layout.analyze()` 先判断这是什么
+拓扑（单主干 + 到地并联支路的哪一类模板），判断不了就明确拒绝；只有判断
+成立之后才由 `layout.plan()` 生成坐标。拓扑不是"排不出来"，而是"这类还没
+验过"——两者的错误信息必须不同。
+
+v0.7.0 支持的拓扑（详见 tools/layout.py 文件头）：
+`shunt_load` / `series_chain` / `divider` / `bypass` / `tee` / `ladder`。
+明确拒绝：真正的并联支路（fork）、并联到地（parallel_shunt）、
+跨级连接（cross_link）、悬空元件（island）、环路、多电源。
 
 依赖分层
 --------
@@ -56,11 +63,11 @@ if HERE not in sys.path:
 
 import circuit_ir as irmod      # noqa: E402
 import ir_compile               # noqa: E402
+import layout as layoutmod      # noqa: E402
 
 SESS_ROOT = os.path.join(ROOT, "out", "mcp", "sessions")
 
 MAX_PROBES = 9          # LocalName 序号超过一位数字的命名规则未验证
-MAX_PASSIVES = 2        # 布局只实测过 1~2 个无源元件
 _CID_RE = re.compile(r"^c-[0-9a-f]{10}$")
 
 # ---------------------------------------------------------------------------
@@ -331,11 +338,6 @@ def _find_ground(ir):
     return gs[0]
 
 
-def _passives(ir):
-    return [c for c in ir.components
-            if c.family in ("RESISTOR", "CAPACITOR")]
-
-
 def _latest_outputs(cid, meta):
     """从最近一次仿真记录里取 probe_id -> output。
 
@@ -361,6 +363,24 @@ def _latest_outputs(cid, meta):
     return out
 
 
+def _topology_brief(ir):
+    """给状态快照用的拓扑摘要。**永不抛错** —— 电路还没搭完是正常状态。
+
+    `simulate` 用的是严格版本（`plan_layout(..., want_topology=True)`）：
+    拓扑不成立就拒绝仿真。这里只回答"我现在搭成什么样了"，所以拓扑不成立
+    时把原因一起返回，让 Agent 知道还差什么。
+    """
+    try:
+        t = layoutmod.analyze(ir)
+    except layoutmod.LayoutError as e:
+        return {"kind": None, "supported": False,
+                "reason": e.context.get("reason") or e.code,
+                "message": e.message, "hint": e.hint}
+    d = t.to_dict()
+    d["supported"] = True
+    return d
+
+
 def _describe(cid, ir, meta):
     """统一的状态快照 —— create / add / connect / add_probe / get_circuit 都返回这个形状。"""
     outs = _latest_outputs(cid, meta)
@@ -371,6 +391,7 @@ def _describe(cid, ir, meta):
         "nets": [{"name": n.name, "pins": list(n.pins)} for n in ir.nets],
         "probes": [_channel(p.refdes, p.net, p.kind, outs.get(p.refdes))
                    for p in ir.probes],
+        "topology": _topology_brief(ir),
         "simulation": {
             "analysis": ir.simulation.analysis,
             "start": ir.simulation.start,
@@ -436,110 +457,30 @@ def _auto_net_name(ir, pins):
 
 
 # ---------------------------------------------------------------------------
-# 布局：单电源串联链 -> 坐标
+# 布局：委托给 layout.py（拓扑判断先于坐标布局）
+#
+# 这一层只做一件事：把 layout.LayoutError 转成对外的 SessionError。
+# 拓扑分析 / 模板匹配 / 坐标生成全在 layout.py —— 那里不认识 MCP，也不认识
+# 会话层，所以可以用纯逻辑单测（tools/test_layout.py）。
 # ---------------------------------------------------------------------------
-_SRC_POS = (300.0, 300.0)
-_GND_POS = (300.0, 420.0)
-_PASSIVE_POS = ((500.0, 300.0), (700.0, 400.0))
+def topology_of(ir):
+    """只做拓扑分析，不算坐标。返回 layout.Topology。"""
+    try:
+        return layoutmod.analyze(ir)
+    except layoutmod.LayoutError as e:
+        raise SessionError(e.code, e.message, e.hint, e.context)
 
 
-def _chain(ir):
-    """从电源正极沿网络走到地，返回链上元件顺序（不含源和地）。
+def plan_layout(ir, want_topology=False):
+    """返回 {refdes: [x, y]}；want_topology=True 时返回 (Topology, pos)。
 
-    只认一条链：任何网络分叉都报 LAYOUT_UNSUPPORTED，不硬排。
+    拓扑不在支持范围内时抛 LAYOUT_UNSUPPORTED，**不猜坐标**。
     """
-    src = _find_source(ir)
-    if src is None:
-        raise _err("NO_SOURCE", "电路里没有电源",
-                   "先 add_component 一个 DC_POWER 或 AC_VOLTAGE。")
-    gnd = _find_ground(ir)
-    if gnd is None:
-        raise _err("NO_GROUND", "电路里没有接地元件",
-                   "加一个 POWER_SOURCES/GROUND，并把回路接上去。")
-
-    m = PART_META.get((src.family, src.part)) or {}
-    pos_pin = (m.get("aliases") or {}).get("+", "1")
-
-    visited = {src.refdes}
-    chain = []
-    cur_net = _net_of_pin(ir, src.refdes, pos_pin)
-    if cur_net is None:
-        raise _err("SOURCE_NOT_CONNECTED",
-                   "电源 %s 的正极还没接线" % src.refdes,
-                   "先 connect 电源正极和下一个元件。", refdes=src.refdes)
-
-    guard = 0
-    while True:
-        guard += 1
-        if guard > 32:
-            raise _err("LAYOUT_UNSUPPORTED", "拓扑遍历没有收敛（可能有环）",
-                       "第一版只支持单电源串联链到地。")
-        net = ir.net(cur_net)
-        if net is None:
-            raise _err("INTERNAL", "网络 %r 不存在" % cur_net)
-
-        cands = []
-        for ref, pin in net.refs():
-            if ref in visited:
-                continue
-            comp = ir.component(ref)
-            if comp is None:
-                continue
-            cands.append((ref, pin))
-
-        if not cands:
-            raise _err("LAYOUT_UNSUPPORTED",
-                       "从 %r 走不下去了，回路没接到地" % cur_net,
-                       "第一版只支持：电源 -> 若干元件 -> 地 的单链拓扑。",
-                       net=cur_net)
-
-        if len(cands) > 1:
-            raise _err(
-                "LAYOUT_UNSUPPORTED",
-                "网络 %r 有 %d 个分支（%s）"
-                % (cur_net, len(cands), ", ".join("%s.%s" % c for c in cands)),
-                "第一版只支持串联链；并联 / 多支路的布局还没验证过。",
-                net=cur_net, branches=["%s.%s" % c for c in cands])
-
-        ref, pin = cands[0]
-        comp = ir.component(ref)
-        visited.add(ref)
-        if comp.part == "GROUND":
-            break
-        chain.append(comp)
-
-        spec = irmod.SUPPORTED.get((comp.family, comp.part)) or {}
-        others = [p for p in spec.get("pins", ())
-                  if p != _norm_pin(comp, pin)]
-        if len(others) != 1:
-            raise _err("LAYOUT_UNSUPPORTED",
-                       "%s 不是两端元件，串联链布局不支持" % ref,
-                       context={"refdes": ref})
-        nxt = _net_of_pin(ir, ref, others[0])
-        if nxt is None:
-            raise _err("LAYOUT_UNSUPPORTED",
-                       "%s 的另一个引脚还没接线" % ref,
-                       "串联链要求每个元件两端都接到网络。", refdes=ref)
-        cur_net = nxt
-
-    return src, gnd, chain
-
-
-def plan_layout(ir):
-    """返回 {refdes: [x, y]}。拓扑不支持就抛错，不猜坐标。"""
-    src, gnd, chain = _chain(ir)
-    if len(chain) > MAX_PASSIVES:
-        raise _err(
-            "LAYOUT_UNSUPPORTED",
-            "串联链上有 %d 个元件，超过已验证上限 %d 个"
-            % (len(chain), MAX_PASSIVES),
-            "布局只实测过 1~2 个无源元件的坐标组合。",
-            count=len(chain), limit=MAX_PASSIVES)
-    pos = {src.refdes: list(_SRC_POS), gnd.refdes: list(_GND_POS)}
-    for i, comp in enumerate(chain):
-        p = _PASSIVE_POS[i] if i < len(_PASSIVE_POS) else (500.0 + 200.0 * i, 400.0)
-        pos[comp.refdes] = list(p)
-    return pos
+    try:
+        topo, pos = layoutmod.plan_ir(ir)
+    except layoutmod.LayoutError as e:
+        raise SessionError(e.code, e.message, e.hint, e.context)
+    return (topo, pos) if want_topology else pos
 
 
 # ---------------------------------------------------------------------------
@@ -928,14 +869,10 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
     analysis = analysis or _default_analysis(ir)
     src = _check_analysis(ir, analysis)
 
-    # ---------- 布局（坐标由这里决定，Agent 不用管） ----------
-    pos = plan_layout(ir)
-    for comp in ir.components:
-        comp.position = pos.get(comp.refdes, comp.position)
-    t_layout = _spent()
-    _check("layout")
-
     # ---------- 仿真参数 ----------
+    #
+    # 先算参数再校验：validate() 会检查 simulation.stop > 0，而 stop 是按源
+    # 频率推出来的。顺序反了会把"参数还没算"误报成"电路不完整"。
     s = ir.simulation
     s.analysis = analysis
     if analysis == "dc":
@@ -958,13 +895,25 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
         if start is not None:
             s.start = float(start)
 
-    # ---------- 校验 + 落盘 + 编译 ----------
+    # ---------- 再校验电路完整性 ----------
+    #
+    # 排在拓扑判断之前：一个"元件没接线"的电路，从拓扑层看是 island，
+    # 但 Agent 需要的是"R2 的引脚 2 没接"这种具体信息。校验先跑，错误更准。
     errs = ir.validate()
     if errs:
         raise _err("VALIDATION_FAILED",
                    "电路还不完整，有 %d 项问题" % len(errs),
                    "按 issues 逐条修，修完再 simulate。",
                    issues=errs)
+
+    # ---------- 拓扑 + 布局（先判断拓扑，再算坐标） ----------
+    topo, pos = plan_layout(ir, want_topology=True)
+    for comp in ir.components:
+        comp.position = pos.get(comp.refdes, comp.position)
+    t_layout = _spent()
+    _check("layout")
+
+    # ---------- 落盘 + 编译 ----------
     _save(circuit_id, ir, meta)
 
     name = re.sub(r"[^A-Za-z0-9_.-]+", "_", ir.name or circuit_id)
@@ -1046,6 +995,7 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
         "ir_snapshot": os.path.relpath(snap, ROOT),
         "waveform": os.path.relpath(csv_path, ROOT) if chans else None,
         "summary": summary,
+        "topology": topo.to_dict(),
         "timing": timing,
         "compile": {"bytes": crep.get("bytes")},
     }

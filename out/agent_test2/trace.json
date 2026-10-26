@@ -8,10 +8,10 @@
     "phase_theory": -64.5814879940509,
     "vout_theory": 0.5843423285364553
   },
-  "circuit_id": "c-c35595c4c1",
+  "circuit_id": "c-ff609784f1",
   "steps": 17,
   "snapshot": {
-    "circuit_id": "c-c35595c4c1",
+    "circuit_id": "c-ff609784f1",
     "name": "agent2_2nd_order_lpf",
     "components": [
       {
@@ -152,6 +152,37 @@
         "kind": "V"
       }
     ],
+    "topology": {
+      "kind": "ladder",
+      "source": "V1",
+      "ground": "GND1",
+      "in_net": "in",
+      "gnd_net": "0",
+      "out_net": "n2",
+      "n_series": 2,
+      "n_shunt": 2,
+      "stages": [
+        {
+          "index": 0,
+          "net": "in",
+          "series": "R1",
+          "shunt": null
+        },
+        {
+          "index": 1,
+          "net": "n1",
+          "series": "R2",
+          "shunt": "C1"
+        },
+        {
+          "index": 2,
+          "net": "n2",
+          "series": null,
+          "shunt": "C2"
+        }
+      ],
+      "supported": true
+    },
     "simulation": {
       "analysis": "transient",
       "start": 0.0,
@@ -167,21 +198,272 @@
     "warnings": [],
     "ok": true
   },
-  "simulate_ok": false,
-  "simulate_error": {
-    "ok": false,
-    "error": {
-      "code": "LAYOUT_UNSUPPORTED",
-      "message": "网络 'n1' 有 2 个分支（C1.1, R2.1）",
-      "hint": "第一版只支持串联链；并联 / 多支路的布局还没验证过。",
-      "context": {
-        "net": "n1",
-        "branches": [
-          "C1.1",
-          "R2.1"
-        ]
+  "simulate_ok": true,
+  "simulate_error": null,
+  "sim": {
+    "sim_id": "s-bc1eb36a7a",
+    "circuit_id": "c-ff609784f1",
+    "analysis": "transient",
+    "status": "ok",
+    "created": "2026-10-26T21:03:20",
+    "outputs": [
+      "V(探针1)",
+      "V(探针2)"
+    ],
+    "probes": [
+      {
+        "probe_id": "P1",
+        "label": "探针1",
+        "output": "V(探针1)",
+        "net": "in",
+        "kind": "V"
+      },
+      {
+        "probe_id": "P2",
+        "label": "探针2",
+        "output": "V(探针2)",
+        "net": "n2",
+        "kind": "V"
       }
-    }
+    ],
+    "rlc_reported_by_multisim": {
+      "C1": 8.2e-09,
+      "C2": 8.2e-09,
+      "R1": 10000.0,
+      "R2": 10000.0
+    },
+    "state": "0",
+    "sample_rate": 200000.0,
+    "stop": 0.006,
+    "n": 1200,
+    "ms14": "out\\mcp\\sessions\\c-ff609784f1\\agent2_2nd_order_lpf.ms14",
+    "ir_snapshot": "out\\mcp\\sessions\\c-ff609784f1\\sims\\s-bc1eb36a7a.ir.json",
+    "waveform": "out\\mcp\\sessions\\c-ff609784f1\\sims\\s-bc1eb36a7a.csv",
+    "summary": {
+      "P1": {
+        "n": 1200,
+        "min": -0.9984955064059333,
+        "max": 0.9984955064059335,
+        "mean": 3.5325629475268755e-06
+      },
+      "P2": {
+        "n": 1200,
+        "min": -0.5817834483427045,
+        "max": 0.660942395142328,
+        "mean": 0.020075650712464903
+      }
+    },
+    "topology": {
+      "kind": "ladder",
+      "source": "V1",
+      "ground": "GND1",
+      "in_net": "in",
+      "gnd_net": "0",
+      "out_net": "n2",
+      "n_series": 2,
+      "n_shunt": 2,
+      "stages": [
+        {
+          "index": 0,
+          "net": "in",
+          "series": "R1",
+          "shunt": null
+        },
+        {
+          "index": 1,
+          "net": "n1",
+          "series": "R2",
+          "shunt": "C1"
+        },
+        {
+          "index": 2,
+          "net": "n2",
+          "series": null,
+          "shunt": "C2"
+        }
+      ]
+    },
+    "timing": {
+      "layout_s": 0.0,
+      "compile_s": 14.556,
+      "run_s": 4.021,
+      "total_s": 18.577
+    },
+    "compile": {
+      "bytes": 38071
+    },
+    "ok": true,
+    "record": "out\\mcp\\sessions\\c-ff609784f1\\sims\\s-bc1eb36a7a.json"
   },
-  "sim": null
+  "measure": {
+    "ok": true,
+    "sim_id": "s-bc1eb36a7a",
+    "analysis": "transient",
+    "what": "all",
+    "probes": [
+      {
+        "probe_id": "P1",
+        "label": "探针1",
+        "output": "V(探针1)",
+        "net": "in",
+        "kind": "V"
+      },
+      {
+        "probe_id": "P2",
+        "label": "探针2",
+        "output": "V(探针2)",
+        "net": "n2",
+        "kind": "V"
+      }
+    ],
+    "channels": {
+      "P1": {
+        "probe_id": "P1",
+        "label": "探针1",
+        "output": "V(探针1)",
+        "net": "in",
+        "kind": "V",
+        "n": 1200,
+        "min": -0.998495506,
+        "max": 0.998495506,
+        "mean": 3.5325629275960157e-06,
+        "rms": 0.7048408209527357,
+        "amp": 0.9967942058046485,
+        "phase_deg": -0.00011195085422549684,
+        "offset": 9.75063649288247e-07
+      },
+      "P2": {
+        "probe_id": "P2",
+        "label": "探针2",
+        "output": "V(探针2)",
+        "net": "n2",
+        "kind": "V",
+        "n": 1200,
+        "min": -0.581783448,
+        "max": 0.660942395,
+        "mean": 0.020075650714651238,
+        "rms": 0.41433132353035773,
+        "amp": 0.581192740513016,
+        "phase_deg": -64.70477819522247,
+        "offset": 3.9768919080558623e-07
+      }
+    },
+    "notes": [],
+    "mode": "ratio",
+    "gain": 0.5830619170221361,
+    "in_probe": "P1",
+    "out_probe": "P2",
+    "phase_deg": -64.70466624436825,
+    "source_amp": 1.0,
+    "source_freq": 1000.0,
+    "theory": null
+  },
+  "waveform": {
+    "ok": true,
+    "sim_id": "s-bc1eb36a7a",
+    "analysis": "transient",
+    "sample_rate": 200000.0,
+    "n": 1200,
+    "t_range": [
+      0.0,
+      0.005995
+    ],
+    "artifact": "out\\mcp\\sessions\\c-ff609784f1\\sims\\s-bc1eb36a7a.csv",
+    "probes": [
+      {
+        "probe_id": "P1",
+        "label": "探针1",
+        "output": "V(探针1)",
+        "net": "in",
+        "kind": "V"
+      },
+      {
+        "probe_id": "P2",
+        "label": "探针2",
+        "output": "V(探针2)",
+        "net": "n2",
+        "kind": "V"
+      }
+    ],
+    "channels": {
+      "P2": {
+        "probe_id": "P2",
+        "label": "探针2",
+        "output": "V(探针2)",
+        "net": "n2",
+        "kind": "V",
+        "n": 1200,
+        "min": -0.581783448,
+        "max": 0.660942395,
+        "mean": 0.020075650714651238,
+        "preview": {
+          "t": [
+            0.0,
+            0.0002,
+            0.0004,
+            0.0006,
+            0.0008,
+            0.001,
+            0.0012,
+            0.0014,
+            0.0016,
+            0.0018,
+            0.002,
+            0.0022,
+            0.0024,
+            0.0026,
+            0.0028,
+            0.003,
+            0.0032,
+            0.0034,
+            0.0036,
+            0.0038,
+            0.004,
+            0.0042,
+            0.0044,
+            0.0046,
+            0.0048,
+            0.005,
+            0.0052,
+            0.0054,
+            0.0056,
+            0.0058
+          ],
+          "v": [
+            0.0,
+            0.294484332,
+            0.657521751,
+            0.313659077,
+            -0.384479201,
+            -0.521064286,
+            0.0757501628,
+            0.571489672,
+            0.279865515,
+            -0.397790522,
+            -0.526289779,
+            0.0736923211,
+            0.570680427,
+            0.279547642,
+            -0.397915733,
+            -0.526338931,
+            0.0736729644,
+            0.570672815,
+            0.279544652,
+            -0.397916911,
+            -0.526339394,
+            0.0736727823,
+            0.570672743,
+            0.279544624,
+            -0.397916922,
+            -0.526339398,
+            0.0736727806,
+            0.570672742,
+            0.279544624,
+            -0.397916922
+          ]
+        }
+      }
+    },
+    "preview_step": 40
+  }
 }

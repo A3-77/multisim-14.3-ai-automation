@@ -1,0 +1,451 @@
+# -*- coding: utf-8 -*-
+"""拓扑分析 + 坐标布局（v0.7.0：P2 branch-aware layout）。
+
+为什么单独一个模块
+------------------
+**拓扑判断先于坐标布局。** 这是这一版最重要的结构决定：
+
+    Circuit IR
+      -> analyze()      纯图论：这是什么拓扑？支路在哪？属于哪个模板？
+      -> Topology       结构化描述（stages / shunt / 输出网）
+      -> plan()         按拓扑生成坐标
+      -> {refdes: [x, y]}
+      -> ir_compile     -> .ms14
+
+如果顺序反过来（先试着摆坐标、摆不下再报错），错误会落在坐标层，
+而真正的问题是"拓扑没被表达"。等以后支持运放、反馈、桥式电路时，
+这个差别会变成"每次加一种电路都要改坐标代码"还是"只加一个模板"。
+所以这里彻底分开：`analyze()` 不认识坐标，`plan()` 不认识电路语义。
+
+一条必须说清楚的事实（实测，见 docs/layout.md）
+----------------------------------------------
+**坐标不影响连通性。** `ir_compile` 建网表用的是 nets 里显式的引脚列表
+（`msbuild.connect(members)`），坐标只决定符号画在哪、导线连成什么折线。
+所以布局器的职责是两件：
+
+  1. 准入门槛 —— 这个拓扑我们验过吗？没验过就明确拒绝，不硬排；
+  2. 可读坐标 —— 给一套不重叠、能看出层级的坐标。
+
+它**不负责**"把电路连对"。这一点很关键：它意味着 P2 的风险不在电气，
+而在"准入判断写得准不准"。
+
+支持的拓扑类：单主干 + 到地并联支路（ladder）
+--------------------------------------------
+一条从电源正极出发、逐级向下的主干；每级最多一个到地的并联元件；
+电源负极接地。三个具名模板是它的特例：
+
+    kind            结构                          例子
+    --------------  ----------------------------  ----------------------
+    shunt_load      0 串联 + 1 到地               直流源 + 一个电阻
+    series_chain    N 串联 + 0 到地               分压的上半臂 / 空载串联
+    divider         1 串联 + 1 到地(电阻)         电阻分压
+    bypass          1 串联 + 1 到地(电容)         一阶 RC 低通
+    tee             2 串联 + 1 到地(电阻，中间级)  T 型网络
+    ladder          其它（≥2 串联，≥1 到地）      二阶 RC 梯形
+
+明确拒绝（不是"排不出来"，是"这类拓扑还没验过"）：
+
+    reason           含义
+    --------------  --------------------------------------------
+    fork            一个节点有 2 条向下的主干（真正的并联支路 / 跨级连接）
+    parallel_shunt  一个节点有 2 个到地元件（并联到地）
+    island          元件和电源不连通（悬空 / 独立子电路）
+    cycle           拓扑回到走过的节点（环路 / 反馈）
+    open_pin        元件的另一端没接线
+    too_many_stages 主干级数超过验证范围
+"""
+import circuit_ir as irmod
+
+
+# 主干级数上限。不是技术极限（坐标是装饰性的），是"验过的范围"：
+# 超过 4 级时符号排布是否还看得清，没实测过。
+MAX_STAGES = 4
+MAX_SHUNTS = 4
+
+# 坐标网格。源独占最左一列，各级从源右边一格开始；串联元件在级与级之间，
+# 并联元件挂在级列正下方，地在左下。
+#
+# ⚠️ 为什么各级要从 X0 + DX 开始，而不是 X0：
+# 一开始把第 0 级放在 X0（也就是源的正下方），结果直流电路（源 + 一个到地
+# 电阻）的 `0` 网导线从电阻下引脚竖直向上走回源负极，**横穿了电阻自己的
+# 符号框**，Multisim 只认出一个探针通道（`outputs=["V(探针1)"]`）。
+# 实测证据见 docs/layout.md 第 6 节。把各级右移一格后导线不再穿任何符号。
+X0 = 300.0
+DX = 240.0
+Y_MAIN = 300.0
+Y_SHUNT = 460.0
+Y_GND = 620.0
+
+
+def _col_x(index):
+    """第 index 级所在的列。源占 X0，所以第 0 级从 X0 + DX 开始。"""
+    return X0 + DX * (index + 1)
+
+
+class LayoutError(Exception):
+    """布局 / 拓扑层自己的错误类型。
+
+    故意不依赖 circuit_session.SessionError：这一层要能在不 import
+    会话层的情况下单独测试。会话层负责把它转成对外的结构化错误。
+    """
+
+    def __init__(self, code, message, hint=None, **context):
+        Exception.__init__(self, message)
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.context = context
+
+    def to_dict(self):
+        d = {"code": self.code, "message": self.message}
+        if self.hint:
+            d["hint"] = self.hint
+        if self.context:
+            d["context"] = self.context
+        return d
+
+    def __str__(self):
+        return "%s: %s" % (self.code, self.message)
+
+
+# ---------------------------------------------------------------------------
+# 数据结构
+# ---------------------------------------------------------------------------
+class Stage(object):
+    """主干上的一级。
+
+    `net`   这一级对应的网络
+    `series` 从这一级往下走的串联元件（最后一级没有）
+    `shunt`  挂在这一级到地的并联元件（可能没有）
+    """
+
+    __slots__ = ("index", "net", "series", "shunt")
+
+    def __init__(self, index, net, series=None, shunt=None):
+        self.index = index
+        self.net = net
+        self.series = series
+        self.shunt = shunt
+
+    def to_dict(self):
+        return {"index": self.index, "net": self.net,
+                "series": self.series, "shunt": self.shunt}
+
+    def __repr__(self):
+        return "Stage(%d, %r, series=%r, shunt=%r)" % (
+            self.index, self.net, self.series, self.shunt)
+
+
+class Topology(object):
+    """`analyze()` 的产物。只描述结构，不含任何坐标。"""
+
+    def __init__(self, kind, source, ground, in_net, gnd_net, stages, out_net):
+        self.kind = kind
+        self.source = source
+        self.ground = ground
+        self.in_net = in_net
+        self.gnd_net = gnd_net
+        self.stages = stages
+        self.out_net = out_net
+
+    @property
+    def n_series(self):
+        return max(0, len(self.stages) - 1)
+
+    @property
+    def n_shunt(self):
+        return sum(1 for s in self.stages if s.shunt)
+
+    @property
+    def elements(self):
+        """主干 + 并联的全部元件位号，按信号流向。"""
+        out = []
+        for s in self.stages:
+            if s.series:
+                out.append(s.series)
+            if s.shunt:
+                out.append(s.shunt)
+        return out
+
+    def to_dict(self):
+        return {
+            "kind": self.kind,
+            "source": self.source,
+            "ground": self.ground,
+            "in_net": self.in_net,
+            "gnd_net": self.gnd_net,
+            "out_net": self.out_net,
+            "n_series": self.n_series,
+            "n_shunt": self.n_shunt,
+            "stages": [s.to_dict() for s in self.stages],
+        }
+
+    def summary(self):
+        lines = ["拓扑 %s：%d 级主干 / %d 个到地支路"
+                 % (self.kind, self.n_series, self.n_shunt),
+                 "  %s(+) -> %s" % (self.source, self.in_net)]
+        for s in self.stages:
+            bits = ["[%d] %s" % (s.index, s.net)]
+            if s.series:
+                bits.append("--%s--> " % s.series)
+            if s.shunt:
+                bits.append("|%s->%s" % (s.shunt, self.gnd_net))
+            lines.append("  " + " ".join(bits))
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 小工具
+# ---------------------------------------------------------------------------
+def _pins_of(comp):
+    spec = irmod.SUPPORTED.get((comp.family, comp.part)) or {}
+    return list(spec.get("pins") or ())
+
+
+def _pin_net(ir, refdes, pin):
+    for n in ir.nets:
+        for r, p in n.refs():
+            if r == refdes and p == pin:
+                return n.name
+    return None
+
+
+def _two_pin_other(comp, pin):
+    """两端元件里"另一个"引脚名；不是两端元件返回 None。"""
+    pins = _pins_of(comp)
+    real = irmod._norm_pin(comp, pin)
+    others = [p for p in pins if p != real]
+    return others[0] if len(others) == 1 else None
+
+
+def _sources(ir):
+    return [c for c in ir.components
+            if c.part != "GROUND"
+            and c.family in ("POWER_SOURCES", "SIGNAL_VOLTAGE_SOURCES")]
+
+
+def _grounds(ir):
+    return [c for c in ir.components if c.part == "GROUND"]
+
+
+def _source_pins(comp):
+    """(正极引脚名, 负极引脚名)。"""
+    spec = irmod.SUPPORTED.get((comp.family, comp.part)) or {}
+    al = spec.get("aliases") or {}
+    return al.get("+", "1"), al.get("-", "2")
+
+
+def _is_resistor(comp):
+    return comp is not None and comp.family == "RESISTOR"
+
+
+def _unsupported(reason, message, hint, **context):
+    ctx = {"reason": reason}
+    ctx.update(context)
+    return LayoutError("LAYOUT_UNSUPPORTED", message, hint, **ctx)
+
+
+# ---------------------------------------------------------------------------
+# 第一步：拓扑分析（不认识坐标）
+# ---------------------------------------------------------------------------
+def analyze(ir):
+    """把 Circuit IR 解析成 `Topology`。不支持的拓扑抛 `LayoutError`。"""
+    srcs = _sources(ir)
+    if not srcs:
+        raise LayoutError("NO_SOURCE", "电路里没有电源",
+                          "先 add_component 一个 DC_POWER 或 AC_VOLTAGE。")
+    if len(srcs) > 1:
+        raise LayoutError(
+            "MULTIPLE_SOURCES",
+            "电路里有 %d 个电源（%s）"
+            % (len(srcs), ", ".join(c.refdes for c in srcs)),
+            "P2 只支持单电源。多电源（含运放双电源供电）还没验证过。",
+            sources=[c.refdes for c in srcs])
+    src = srcs[0]
+
+    gnds = _grounds(ir)
+    if not gnds:
+        raise LayoutError("NO_GROUND", "电路里没有接地元件",
+                          "加一个 POWER_SOURCES/GROUND，并把回路接上去。")
+    if len(gnds) > 1:
+        raise LayoutError("MULTIPLE_GROUND",
+                          "电路里有 %d 个 GROUND" % len(gnds),
+                          "第一版只支持一个接地元件（位号 %s）。"
+                          % ", ".join(g.refdes for g in gnds))
+    gnd = gnds[0]
+    gnd_pin = _pins_of(gnd)[0]
+    gnd_net = _pin_net(ir, gnd.refdes, gnd_pin)
+    if gnd_net is None:
+        raise LayoutError("GROUND_NOT_CONNECTED",
+                          "接地元件 %s 还没接到任何网络" % gnd.refdes,
+                          "把回路的一个节点接到 %s.1。" % gnd.refdes,
+                          refdes=gnd.refdes)
+
+    pos_pin, neg_pin = _source_pins(src)
+    in_net = _pin_net(ir, src.refdes, pos_pin)
+    if in_net is None:
+        raise LayoutError("SOURCE_NOT_CONNECTED",
+                          "电源 %s 的正极还没接线" % src.refdes,
+                          "先 connect 电源正极和下一个元件。",
+                          refdes=src.refdes, pin=pos_pin)
+    neg_net = _pin_net(ir, src.refdes, neg_pin)
+    if neg_net != gnd_net:
+        raise LayoutError(
+            "SOURCE_NOT_GROUNDED",
+            "电源 %s 的负极没接到地（在 %r，地是 %r）"
+            % (src.refdes, neg_net, gnd_net),
+            "P2 假设单电源：负极必须和 GROUND 同网络。"
+            "先 connect [%s.-, %s.1]。" % (src.refdes, gnd.refdes),
+            refdes=src.refdes, neg_net=neg_net, gnd_net=gnd_net)
+
+    visited = {src.refdes, gnd.refdes}
+    stages = []
+    seen_nets = set()
+    cur = in_net
+
+    for depth in range(64):
+        if cur in seen_nets:
+            raise _unsupported(
+                "cycle",
+                "拓扑回到了已经走过的节点 %r，有环路" % cur,
+                "P2 不支持环路 / 反馈。把反馈断开，或先只验前向通路。",
+                net=cur)
+        seen_nets.add(cur)
+
+        net = ir.net(cur)
+        if net is None:
+            raise LayoutError("INTERNAL", "网络 %r 不存在" % cur)
+
+        series, shunts = [], []
+        for ref, pin in net.refs():
+            if ref in visited:
+                continue
+            comp = ir.component(ref)
+            if comp is None:
+                raise LayoutError("INTERNAL",
+                                  "网络 %r 引用了不存在的元件 %r" % (cur, ref))
+            other = _two_pin_other(comp, pin)
+            if other is None:
+                raise _unsupported(
+                    "non_two_pin",
+                    "网络 %r 上的 %s 不是两端元件（%s/%s）"
+                    % (cur, ref, comp.family, comp.part),
+                    "P2 的布局只认两端元件：电阻、电容、电源、地。",
+                    net=cur, refdes=ref)
+            onet = _pin_net(ir, ref, other)
+            if onet is None:
+                raise _unsupported(
+                    "open_pin",
+                    "%s 的另一个引脚（%s.%s）还没接线" % (ref, ref, other),
+                    "布局要求每个元件的两端都接到网络。",
+                    net=cur, refdes=ref)
+            (shunts if onet == gnd_net else series).append((ref, onet))
+
+        if len(series) > 1:
+            raise _unsupported(
+                "fork",
+                "网络 %r 有 %d 条向下的主干（%s）"
+                % (cur, len(series), ", ".join(r for r, _ in series)),
+                "P2 支持『单主干 + 到地并联』：一个节点只能有一条向下的主干。"
+                "两条并排的支路（比如两组 RC 并联）还没验证过。"
+                "如果本意是并联，把其中一条改成到地的旁路。",
+                net=cur, branches=[r for r, _ in series])
+        if len(shunts) > 1:
+            raise _unsupported(
+                "parallel_shunt",
+                "网络 %r 有 %d 个到地元件（%s），是并联到地"
+                % (cur, len(shunts), ", ".join(r for r, _ in shunts)),
+                "P2 每一级最多一个到地元件。两个元件并联到地（比如电阻和"
+                "电容并联）还没验证过；拆成一个元件，或先用两个电路分别验。",
+                net=cur, shunts=[r for r, _ in shunts])
+
+        st = Stage(index=depth, net=cur)
+        if shunts:
+            st.shunt = shunts[0][0]
+            visited.add(st.shunt)
+        if not series:
+            stages.append(st)
+            break
+        st.series = series[0][0]
+        visited.add(st.series)
+        stages.append(st)
+        cur = series[0][1]
+    else:
+        raise _unsupported("cycle", "拓扑遍历没有收敛（可能有环）",
+                           "P2 不支持环路 / 反馈。")
+
+    # ---------- 覆盖检查：所有元件都必须在主干或支路上 ----------
+    #
+    # 走到这里还有"没被访问过"的元件，说明它和电源正极不连通。
+    # （真正跨级的元件在主干上一定会被"一个节点只能有一条向下的主干"拦下来，
+    #  所以不需要单独判 cross_link —— 那种情况报 fork 更准确。）
+    leftover = [c.refdes for c in ir.components if c.refdes not in visited]
+    if leftover:
+        raise _unsupported(
+            "island",
+            "这些元件和电源不连通（%s）" % ", ".join(leftover),
+            "P2 只支持从电源正极一路走到地的连通拓扑。悬空元件、"
+            "独立子电路、以及和电源不连通的部分都还不支持。",
+            components=leftover)
+
+    if len(stages) - 1 > MAX_STAGES:
+        raise _unsupported(
+            "too_many_stages",
+            "主干有 %d 级，超过验证上限 %d 级" % (len(stages) - 1, MAX_STAGES),
+            "不是技术上做不到，是超过 %d 级时符号排布没实测过。"
+            "先拆成子电路分别验。" % MAX_STAGES,
+            count=len(stages) - 1, limit=MAX_STAGES)
+    if sum(1 for s in stages if s.shunt) > MAX_SHUNTS:
+        raise _unsupported(
+            "too_many_shunts",
+            "到地支路有 %d 个，超过验证上限 %d 个"
+            % (sum(1 for s in stages if s.shunt), MAX_SHUNTS),
+            "同上：不是做不到，是没验过。", limit=MAX_SHUNTS)
+
+    kind = _classify(ir, stages)
+    return Topology(kind=kind, source=src.refdes, ground=gnd.refdes,
+                    in_net=in_net, gnd_net=gnd_net, stages=stages,
+                    out_net=stages[-1].net)
+
+
+def _classify(ir, stages):
+    """按"串联数 + 到地数 + 元件类型"给出模板名。"""
+    n_series = len(stages) - 1
+    shunts = [s for s in stages if s.shunt]
+
+    if n_series == 0:
+        return "shunt_load"
+    if not shunts:
+        return "series_chain"
+    if n_series == 1 and len(shunts) == 1:
+        comp = ir.component(shunts[0].shunt)
+        return "divider" if _is_resistor(comp) else "bypass"
+    if (n_series == 2 and len(shunts) == 1
+            and shunts[0].index == 1
+            and _is_resistor(ir.component(shunts[0].shunt))):
+        return "tee"
+    return "ladder"
+
+
+# ---------------------------------------------------------------------------
+# 第二步：坐标布局（不认识电路语义）
+# ---------------------------------------------------------------------------
+def plan(topology):
+    """按拓扑给每个元件一个坐标。返回 {refdes: [x, y]}。"""
+    pos = {topology.source: [X0, Y_MAIN],
+           topology.ground: [X0, Y_GND]}
+    for st in topology.stages:
+        x = _col_x(st.index)
+        if st.series:
+            # 串联元件摆在"本级 -> 下一级"的中间，画出来是一段横线
+            pos[st.series] = [x + DX / 2.0, Y_MAIN]
+        if st.shunt:
+            # 并联元件挂在本级正下方，画出来是一段竖线
+            pos[st.shunt] = [x, Y_SHUNT]
+    return pos
+
+
+def plan_ir(ir):
+    """analyze + plan 一步到位，返回 (Topology, {refdes: [x, y]})。"""
+    topo = analyze(ir)
+    return topo, plan(topo)

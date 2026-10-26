@@ -182,13 +182,30 @@ def main():
                    lambda: S.add_probe(cid, "in", name="P1"), "PROBE_DUPLICATE")
 
         # ---------------------------------------------------------------- 5
-        print("\n[5] plan_layout：串联链坐标（与 v0.3.0/v0.5.0 实测一致）")
-        ir, _meta = S._load(cid)
-        pos = S.plan_layout(ir)
+        print("\n[5] plan_layout：一阶 RC 的坐标（拓扑网格，v0.7.0 起）")
+        # 注意：cid 里有个自动编号出来的 R2（470Ω）没接线。拓扑层会把它判成
+        # island —— 这是有意的（见 [8]）。所以坐标用一条干净的一阶 RC 来验。
+        lay = S.create_circuit("layout_rc")
+        lid = lay["circuit_id"]
+        S.add_component(lid, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                        value=1.0, frequency=1000.0)
+        S.add_component(lid, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(lid, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=159e-9)
+        S.add_component(lid, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(lid, [["V1", "+"], ["R1", "1"]])
+        S.connect(lid, [["R1", "2"], ["C1", "1"]])
+        S.connect(lid, [["C1", "2"], ["V1", "-"], ["GND1", "1"]])
+        irl, _ml = S._load(lid)
+        pos = S.plan_layout(irl)
         check("源在 (300,300)", pos["V1"] == [300.0, 300.0], str(pos["V1"]))
-        check("R1 在 (500,300)", pos["R1"] == [500.0, 300.0], str(pos["R1"]))
-        check("C1 在 (700,400)", pos["C1"] == [700.0, 400.0], str(pos["C1"]))
-        check("地在 (300,420)", pos["GND1"] == [300.0, 420.0], str(pos["GND1"]))
+        check("R1 在 (660,300)（第 0 级串联）",
+              pos["R1"] == [660.0, 300.0], str(pos["R1"]))
+        check("C1 在 (780,460)（第 1 级到地）",
+              pos["C1"] == [780.0, 460.0], str(pos["C1"]))
+        check("地在 (300,620)", pos["GND1"] == [300.0, 620.0], str(pos["GND1"]))
+        topo = S.topology_of(irl)
+        check("拓扑识别为一阶 RC（bypass）", topo.kind == "bypass", topo.kind)
+        check("输出网是 C1 所在节点", topo.out_net == "n1", topo.out_net)
 
         # ---------------------------------------------------------------- 6
         print("\n[6] 直流电路：同一套接口，不加任何特殊分支")
@@ -203,9 +220,12 @@ def main():
         S.add_probe(did, "0")
         ir2, _m2 = S._load(did)
         check("直流拓扑也走同一套布局",
-              S.plan_layout(ir2) == {"V1": [300.0, 300.0], "R1": [500.0, 300.0],
-                                     "GND1": [300.0, 420.0]},
+              S.plan_layout(ir2) == {"V1": [300.0, 300.0], "R1": [540.0, 460.0],
+                                     "GND1": [300.0, 620.0]},
               str(S.plan_layout(ir2)))
+        check("直流拓扑识别为 shunt_load",
+              S.topology_of(ir2).kind == "shunt_load",
+              S.topology_of(ir2).kind)
         check("默认分析类型 = dc", S._default_analysis(ir2) == "dc",
               S._default_analysis(ir2))
         check("DC 源的 '+' 别名映射到引脚 1",
@@ -238,8 +258,21 @@ def main():
         S.connect(bid, [["V1", "+"], ["R1", "1"], ["R2", "1"]])
         S.connect(bid, [["R1", "2"], ["R2", "2"], ["V1", "-"], ["GND1", "1"]])
         irb, _mb = S._load(bid)
-        expect_err("并联 -> LAYOUT_UNSUPPORTED",
-                   lambda: S.plan_layout(irb), "LAYOUT_UNSUPPORTED", "串联链")
+        e = expect_err("并联到地 -> LAYOUT_UNSUPPORTED",
+                       lambda: S.plan_layout(irb), "LAYOUT_UNSUPPORTED",
+                       "并联到地")
+        check("  错误带 reason=parallel_shunt",
+              e is not None and e.context.get("reason") == "parallel_shunt",
+              str(e.context if e else None))
+
+        # 悬空元件（cid 里那个没接线的 R2）也必须被拓扑层拦住
+        irc, _mc = S._load(cid)
+        e = expect_err("有元件没接线 -> island",
+                       lambda: S.plan_layout(irc), "LAYOUT_UNSUPPORTED",
+                       "不连通")
+        check("  错误带 reason=island",
+              e is not None and e.context.get("reason") == "island",
+              str(e.context if e else None))
 
         n = S.create_circuit("no_ground")
         nid = n["circuit_id"]
@@ -249,6 +282,67 @@ def main():
         S.connect(nid, [["V1", "-"], ["R1", "2"]])
         irn, _mn = S._load(nid)
         expect_err("没有地 -> NO_GROUND", lambda: S.plan_layout(irn), "NO_GROUND")
+
+        # ---------------------------------------------------------------- 8b
+        print("\n[8b] P2：三个具名模板 + 二阶梯形都能过（v0.7.0 的核心）")
+
+        # 分压：V1 - R1 - n1 - R2 - 0，探针在 n1
+        dv = S.create_circuit("divider")
+        dvid = dv["circuit_id"]
+        S.add_component(dvid, "POWER_SOURCES", "DC_POWER", "V1", value=10.0)
+        S.add_component(dvid, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(dvid, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=1000.0)
+        S.add_component(dvid, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(dvid, [["V1", "+"], ["R1", "1"]])
+        S.connect(dvid, [["R1", "2"], ["R2", "1"]])
+        S.connect(dvid, [["R2", "2"], ["V1", "-"], ["GND1", "1"]])
+        S.add_probe(dvid, "n1")
+        t = S.topology_of(S._load(dvid)[0])
+        check("分压 -> divider", t.kind == "divider", t.kind)
+        check("  输出网 = n1", t.out_net == "n1", t.out_net)
+        check("  两个电阻都摆上了",
+              set(S.plan_layout(S._load(dvid)[0])) == {"V1", "R1", "R2", "GND1"})
+
+        # 二阶 RC 梯形：in - R1 - n1(-C1) - R2 - n2(-C2) - 0
+        ld = S.create_circuit("rc2")
+        ld_id = ld["circuit_id"]
+        S.add_component(ld_id, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                        value=1.0, frequency=1000.0)
+        S.add_component(ld_id, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=10000.0)
+        S.add_component(ld_id, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=10000.0)
+        S.add_component(ld_id, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=8.2e-9)
+        S.add_component(ld_id, "CAPACITOR", "CAPACITOR_VIRTUAL", "C2", value=8.2e-9)
+        S.add_component(ld_id, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(ld_id, [["V1", "+"], ["R1", "1"]])
+        S.connect(ld_id, [["R1", "2"], ["C1", "1"], ["R2", "1"]])
+        S.connect(ld_id, [["R2", "2"], ["C2", "1"]])
+        S.connect(ld_id, [["C1", "2"], ["C2", "2"], ["V1", "-"], ["GND1", "1"]])
+        S.add_probe(ld_id, "in")
+        S.add_probe(ld_id, "n2")
+        irl2, _ml2 = S._load(ld_id)
+        t = S.topology_of(irl2)
+        check("二阶 RC -> ladder", t.kind == "ladder", t.kind)
+        check("  2 级主干 / 2 个到地", (t.n_series, t.n_shunt) == (2, 2),
+              "%d/%d" % (t.n_series, t.n_shunt))
+        check("  三引脚节点 n1 是正常级",
+              [s.net for s in t.stages] == ["in", "n1", "n2"],
+              str([s.net for s in t.stages]))
+        check("  输出网 = n2", t.out_net == "n2", t.out_net)
+        pos2 = S.plan_layout(irl2)
+        check("  6 个元件都有坐标", len(pos2) == 6, str(sorted(pos2)))
+        check("  串联向右递进", pos2["R1"][0] < pos2["R2"][0],
+              "%g < %g" % (pos2["R1"][0], pos2["R2"][0]))
+        check("  并联挂在下方",
+              pos2["C1"][1] > pos2["R1"][1] and pos2["C2"][1] > pos2["R2"][1])
+        snap = S.get_circuit(ld_id)
+        check("get_circuit 里带 topology",
+              snap["topology"]["kind"] == "ladder"
+              and snap["topology"]["supported"] is True,
+              str(snap["topology"].get("kind")))
+        check("未搭完的电路 topology 给出原因而不是报错",
+              S.get_circuit(cid)["topology"]["supported"] is False
+              and S.get_circuit(cid)["topology"]["reason"] == "island",
+              str(S.get_circuit(cid)["topology"].get("reason")))
 
         # ---------------------------------------------------------------- 9
         print("\n[9] 探针上限 9")

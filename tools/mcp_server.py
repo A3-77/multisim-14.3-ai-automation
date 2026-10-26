@@ -62,7 +62,7 @@ except Exception:
 import circuit_session as S     # noqa: E402
 
 SERVER_NAME = "multisim-circuit"
-SERVER_VERSION = "0.6.2"
+SERVER_VERSION = "0.7.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -202,9 +202,13 @@ TOOLS = [
             "什么时候用：改了电路想确认现在长什么样；隔了几轮对话只记得 "
             "circuit_id；想在动手前先看看已经有什么。\n"
             "返回和 create / add_component / connect 完全相同的快照结构："
-            "components / nets / probes / simulation / simulations / counts / "
-            "warnings。如果这个电路已经仿真过，probes[] 里的 label / output "
-            "会被填上（否则是 null）。"
+            "components / nets / probes / topology / simulation / simulations / "
+            "counts / warnings。如果这个电路已经仿真过，probes[] 里的 label / output "
+            "会被填上（否则是 null）。\n"
+            "topology 是后端对你这个电路的拓扑判断：kind（shunt_load / "
+            "series_chain / divider / bypass / tee / ladder）、n_series、n_shunt、"
+            "stages[]、out_net。电路还没搭完时 supported=false，reason 说明还差"
+            "什么 —— 这是正常状态，不是错误。"
         ),
         "inputSchema": {
             "type": "object",
@@ -224,7 +228,11 @@ TOOLS = [
             "每周期 200 点）。\n"
             "这个调用是阻塞的，实测单次 30 s 左右（编译 + 启 Multisim + 读数）。"
             "返回里带 timing（layout_s / compile_s / run_s / total_s），"
-            "可以用它判断电路复杂度和该给多少超时。"
+            "可以用它判断电路复杂度和该给多少超时。\n"
+            "返回里还带 topology（这次仿真按什么拓扑布局的）。拓扑不在支持范围"
+            "内时不会硬跑，而是返回 LAYOUT_UNSUPPORTED + context.reason；"
+            "reason 有 fork（一个节点两条主干）/ parallel_shunt（并联到地）/ "
+            "island（元件和电源不连通）/ too_many_stages 等。"
         ),
         "inputSchema": {
             "type": "object",
@@ -399,7 +407,12 @@ def handle(msg):
                 "不要传坐标，布局由 simulate 自动算。"
                 "探针只有 probe_id 一个身份（P1），measure / get_waveform "
                 "都用它指定通道，不要用 Multisim 的显示名或输出名。"
-                "只支持单电源串联链到地的拓扑（并联会报 LAYOUT_UNSUPPORTED）。"
+                "只支持单电源、单主干 + 到地并联支路的拓扑"
+                "（分压 / 旁路电容 / T 型 / 多级 RC 梯形）；"
+                "真正的并联支路、并联到地、反馈、多电源会报 "
+                "LAYOUT_UNSUPPORTED，context.reason 说明属于哪一类。"
+                "每个状态快照里都带 topology 字段，可以先看后端认为你搭的是"
+                "什么拓扑，再决定要不要 simulate。"
             ),
         })
         return

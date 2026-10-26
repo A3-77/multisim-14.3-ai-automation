@@ -108,7 +108,7 @@
     },
     {
       "name": "get_circuit",
-      "description": "只读地取回一个电路当前的状态，不改变任何东西。\n什么时候用：改了电路想确认现在长什么样；隔了几轮对话只记得 circuit_id；想在动手前先看看已经有什么。\n返回和 create / add_component / connect 完全相同的快照结构：components / nets / probes / simulation / simulations / counts / warnings。如果这个电路已经仿真过，probes[] 里的 label / output 会被填上（否则是 null）。",
+      "description": "只读地取回一个电路当前的状态，不改变任何东西。\n什么时候用：改了电路想确认现在长什么样；隔了几轮对话只记得 circuit_id；想在动手前先看看已经有什么。\n返回和 create / add_component / connect 完全相同的快照结构：components / nets / probes / topology / simulation / simulations / counts / warnings。如果这个电路已经仿真过，probes[] 里的 label / output 会被填上（否则是 null）。\ntopology 是后端对你这个电路的拓扑判断：kind（shunt_load / series_chain / divider / bypass / tee / ladder）、n_series、n_shunt、stages[]、out_net。电路还没搭完时 supported=false，reason 说明还差什么 —— 这是正常状态，不是错误。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -124,7 +124,7 @@
     },
     {
       "name": "simulate",
-      "description": "编译并真跑 Multisim，返回仿真句柄 sim_id。\nanalysis 可选 transient（时域）或 dc（直流工作点，单点）。\n源类型与分析的匹配是强制的：AC_VOLTAGE 只能 transient，DC_POWER 默认 dc（也允许 transient）。不匹配会返回 ANALYSIS_NOT_SUPPORTED 并告诉你该改成什么。\ntransient 不传 stop / sample_rate 时按信号频率自动推算（6 个周期、每周期 200 点）。\n这个调用是阻塞的，实测单次 30 s 左右（编译 + 启 Multisim + 读数）。返回里带 timing（layout_s / compile_s / run_s / total_s），可以用它判断电路复杂度和该给多少超时。",
+      "description": "编译并真跑 Multisim，返回仿真句柄 sim_id。\nanalysis 可选 transient（时域）或 dc（直流工作点，单点）。\n源类型与分析的匹配是强制的：AC_VOLTAGE 只能 transient，DC_POWER 默认 dc（也允许 transient）。不匹配会返回 ANALYSIS_NOT_SUPPORTED 并告诉你该改成什么。\ntransient 不传 stop / sample_rate 时按信号频率自动推算（6 个周期、每周期 200 点）。\n这个调用是阻塞的，实测单次 30 s 左右（编译 + 启 Multisim + 读数）。返回里带 timing（layout_s / compile_s / run_s / total_s），可以用它判断电路复杂度和该给多少超时。\n返回里还带 topology（这次仿真按什么拓扑布局的）。拓扑不在支持范围内时不会硬跑，而是返回 LAYOUT_UNSUPPORTED + context.reason；reason 有 fork（一个节点两条主干）/ parallel_shunt（并联到地）/ island（元件和电源不连通）/ too_many_stages 等。",
       "inputSchema": {
         "type": "object",
         "properties": {

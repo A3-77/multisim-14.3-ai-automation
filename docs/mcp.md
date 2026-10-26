@@ -1,6 +1,6 @@
 # MCP Tool API —— 电路执行器
 
-> 版本：**v0.6.2**（v0.6.0 首版 → v0.6.1 Agent 验收 → v0.6.2 接口一致性修整）
+> 版本：**v0.7.0**（v0.6.0 首版 → v0.6.1 Agent 验收 → v0.6.2 接口一致性修整 → v0.7.0 分支感知布局）
 > 定位：把已经验证过的 **Circuit IR + Multisim 执行链**包成一个 Agent 能直接用的接口。
 > 代码：`tools/circuit_session.py`（业务逻辑）+ `tools/mcp_server.py`（协议层）。
 >
@@ -8,6 +8,11 @@
 > 起因是一次外部 Agent 验收（见 `out/agent_test/AGENT_ACCEPTANCE_REPORT.md`）——
 > 主流程 13 次调用零错误，但暴露出 3 处"同一个概念两套命名"。
 > 这一版不碰 `ir_sim` / `ir_compile` / `msbuild` / `mssafe`，只改返回结构和 schema 文案。
+>
+> **v0.7.0（P2）**：布局从『单链』升级成『先判断拓扑、再生成坐标』，
+> 支持单主干 + 到地并联支路（分压 / 旁路电容 / T 型 / 多级 RC 梯形）。
+> 新增 `tools/layout.py`；`circuit_session` 里不再有拓扑逻辑。
+> 详见 [layout.md](layout.md)。
 
 ---
 
@@ -23,7 +28,8 @@
 | 协议层 | `mcp_server.py` | JSON-RPC over stdio、tools/list、tools/call。**只做收发** |
 | 会话层 | `circuit_session.py` | 电路句柄、语义参数映射、唯一性检查、自动命名、**自动布局**、分析类型匹配、结构化错误 |
 
-会话层有真业务逻辑，所以它能单独测试（`test_mcp_session.py`，78 项，不需要 Multisim）。
+会话层有真业务逻辑，所以它能单独测试（`test_mcp_session.py` 96 项 +
+`test_layout.py` 51 项，都不需要 Multisim）。
 协议层薄到没有分支逻辑，坏了很容易看出来。
 
 ---
@@ -184,7 +190,8 @@ MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 {"circuit_id": "c-...", "analysis": "dc"}
 ```
 
-内部依次做：算布局 → 写回 IR → `validate()` → 编译 `.ms14` → 开 Multisim → 读探针 → 落盘。
+内部依次做：算仿真参数 → `validate()` → **拓扑判断 + 布局** → 写回 IR → 编译 `.ms14` → 开 Multisim → 读探针 → 落盘。
+（`validate()` 排在拓扑之前，这样"元件没接线"报的是具体引脚，而不是被拓扑层笼统判成 `island`。）
 
 **分析类型和源类型是强制的，不会为了接口统一而放宽**：
 
@@ -392,26 +399,70 @@ simulation  { analysis, start, stop, sample_rate }
 
 ## 6. 自动布局：坐标归底层管
 
-`plan_layout()` 在 `simulate` 时按拓扑算坐标。第一版只支持**单电源串联链到地**，
-用的是 v0.3.0 / v0.5.0 在真机上验证过的那套：
+`plan_layout()` 在 `simulate` 时按拓扑算坐标。**Agent 永远不用给坐标。**
+
+v0.7.0（P2）起，布局分成两步，**拓扑判断先于坐标布局**：
+
+```
+Circuit IR → layout.analyze() → Topology → layout.plan() → {refdes: [x, y]}
+```
+
+`analyze()` 不认识坐标，`plan()` 不认识电路语义。完整设计、支持的拓扑类、
+拒绝规则、以及一次真实的几何 bug 都记在 [layout.md](layout.md)。
+
+### 6.1 支持的拓扑：单主干 + 到地并联支路
+
+| kind | 结构 | 例子 |
+| --- | --- | --- |
+| `shunt_load` | 0 串联 + 1 到地 | 直流 5 V + 1 kΩ |
+| `series_chain` | N 串联 + 0 到地 | 空载串联 |
+| `divider` | 1 串联 + 1 到地（电阻） | 电阻分压 |
+| `bypass` | 1 串联 + 1 到地（电容） | 一阶 RC 低通 |
+| `tee` | 2 串联 + 1 到地（电阻，中间级） | T 型网络 |
+| `ladder` | 其它（≥2 串联，≥1 到地） | 二阶 RC 梯形 |
+
+每级最多一个到地元件；主干最多 4 级。
+
+### 6.2 坐标网格
 
 | 位置 | 坐标 |
 | --- | --- |
-| 电源 | `(300, 300)` |
-| 第 1 个无源元件 | `(500, 300)` |
-| 第 2 个无源元件 | `(700, 400)` |
-| 地 | `(300, 420)` |
+| 电源 | `(300, 300)` —— 独占最左列 |
+| 第 i 级的列 | `x = 540 + 240*i` |
+| 第 i 级串联元件 | `(x + 120, 300)` |
+| 第 i 级到地元件 | `(x, 460)` |
+| 地 | `(300, 620)` |
 
-拓扑不是串联链时**明确报错**，而不是硬排一个没验证过的布局：
+> 电源必须独占最左列。第 0 级如果放在 `x = 300`（电源正下方），
+> 到地元件回电源负极的导线会**横穿自己的符号框**，Multisim 会少认一个
+> 探针通道（表现为"仿真成功但只有一个通道有数"）。细节见 layout.md 第 6 节。
+
+### 6.3 拓扑不在支持范围内时
+
+明确报错，不硬排：
 
 ```json
 {"code": "LAYOUT_UNSUPPORTED",
- "message": "网络 'in' 有 2 个分支（R1.1, R2.1）",
- "hint": "第一版只支持串联链；并联 / 多支路的布局还没验证过。",
- "context": {"net": "in", "branches": ["R1.1", "R2.1"]}}
+ "message": "网络 'in' 有 2 个到地元件（R1, R2），是并联到地",
+ "hint": "P2 每一级最多一个到地元件。两个元件并联到地（比如电阻和电容并联）还没验证过；拆成一个元件，或先用两个电路分别验。",
+ "context": {"reason": "parallel_shunt", "net": "in", "shunts": ["R1", "R2"]}}
 ```
 
-无源元件超过 2 个也报错（布局只实测过 1~2 个）。
+`context.reason` 是机器可读的分类：`fork` / `parallel_shunt` / `island` /
+`open_pin` / `cycle` / `too_many_stages`。
+
+### 6.4 电路还没搭完也能看拓扑
+
+每个状态快照（`create` / `add_component` / `connect` / `add_probe` /
+`get_circuit`）都带 `topology`。电路还不完整时不是报错，而是：
+
+```json
+{"kind": null, "supported": false, "reason": "island",
+ "message": "这些元件和电源不连通（R2）",
+ "hint": "P2 只支持从电源正极一路走到地的连通拓扑。..."}
+```
+
+这样 Agent 可以在 `simulate` 之前就知道后端会怎么理解它的电路。
 
 ---
 
@@ -435,7 +486,8 @@ simulation  { analysis, start, stop, sample_rate }
 | `PROBE_DUPLICATE` | 探针重名 | 换名字或不传 |
 | `ANALYSIS_NOT_SUPPORTED` | 源和分析类型不匹配 | 该改成什么 |
 | `NO_SOURCE` / `NO_GROUND` / `NO_PROBE` | 电路不完整 | 缺什么 |
-| `LAYOUT_UNSUPPORTED` | 拓扑不是串联链 | 说明第一版只支持什么 |
+| `LAYOUT_UNSUPPORTED` | 拓扑不在支持范围 | 说明支持哪几类，`context.reason` 给出分类 |
+| `MULTIPLE_SOURCES` / `SOURCE_NOT_GROUNDED` | 单电源前提不成立 | 怎么改接法 |
 | `VALIDATION_FAILED` | IR 校验不过 | 带 `issues` 列表，逐条修 |
 | `COMPILE_FAILED` | IR → `.ms14` 失败 | 通常是布局/引脚映射 |
 | `SIMULATION_FAILED` | Multisim 没返回数据 | 检查探针是否落在导线上 |
@@ -477,7 +529,7 @@ simulation  { analysis, start, stop, sample_rate }
 | 场景 | 错误码 |
 | --- | --- |
 | `AC_VOLTAGE` + `analysis="dc"` | `ANALYSIS_NOT_SUPPORTED`（带 `supported: ["transient"]`） |
-| 并联拓扑 | `LAYOUT_UNSUPPORTED`（指出 `branches: ["R1.1","R2.1"]`） |
+| 并联到地 | `LAYOUT_UNSUPPORTED`（`reason="parallel_shunt"`、`shunts=["R1","R2"]`） |
 | `add_probe(target="R1")` | `AMBIGUOUS_TARGET`（提示写成 `R1.1`） |
 | 电感 | `UNKNOWN_COMPONENT_TYPE`（列出 5 种可用） |
 | `AC_VOLTAGE` 缺 `frequency` | `MISSING_PARAMETER`（`context.field="frequency"`） |
@@ -494,7 +546,15 @@ simulation  { analysis, start, stop, sample_rate }
 | `get_circuit` 读回 | 4 元件 / 3 网络 / 2 探针 |
 | 仿真后 `get_circuit` 的 `probes[].output` | `['V(探针1)','V(探针2)']`（不用重跑） |
 
-**55 项断言全部通过**，结果落在 `out/mcp/acceptance.json`。
+### v0.7.0 新增（P2）
+
+| 检查项 | 结果 |
+| --- | --- |
+| 并联到地报错 | `LAYOUT_UNSUPPORTED`，`context.reason = parallel_shunt`，`shunts = ['R1','R2']` |
+| 直流两个探针 | `{'P1': 1, 'P2': 1}`，5.000000 V / 0.000000 V / 1000 Ω / 0.005000 A |
+| 一阶 RC（新网格坐标） | 0.706316 / −45.065°，与旧网格逐位一致 |
+
+**56 项断言全部通过**，结果落在 `out/mcp/acceptance.json`。
 
 ---
 
@@ -522,7 +582,8 @@ python tools/mcp_client.py
 纯逻辑测试（不需要 Multisim，任意位数 Python）：
 
 ```bash
-python tools/test_mcp_session.py      # 78 项
+python tools/test_mcp_session.py      # 96 项（会话层）
+python tools/test_layout.py           # 51 项（拓扑 + 坐标）
 ```
 
 ---
@@ -531,8 +592,8 @@ python tools/test_mcp_session.py      # 78 项
 
 | 不做 | 原因 |
 | --- | --- |
-| 并联 / 多支路 | 布局没验证过；`plan_layout` 会明确报错而不是硬排 |
-| 串联链 > 2 个无源元件 | 同上 |
+| 真正的并联支路 / 并联到地 / 反馈 | 布局没验证过；`analyze()` 会明确报错而不是硬排 |
+| 主干 > 4 级、多电源 | 同上 |
 | 电感 / 二极管 / 运放 / 555 | 不在白名单 |
 | 探针 > 9 | `LocalName` 序号超一位的命名规则未确认 |
 | 电流探针 | 电压探针 + `I=V_R/R` 是已验证路径 |
