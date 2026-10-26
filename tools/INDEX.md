@@ -17,11 +17,14 @@
 | `ir_sim.py` | 仿真 + 拟合内核（`nl_run` 用；`ir_run` 保持原样当基线，不被它影响） |
 | `nl2ir.py` | **中文 → Circuit IR**（规则解析器，不依赖 LLM；产出前先 `validate()`） |
 | `nl_run.py` | 中文端到端验收（一句话 → IR → `.ms14` → 仿真 → 理论比对） |
-| `test_nl2ir.py` | 解析测试：46 项正向/反向用例，不需要 Multisim |
+| `test_nl2ir.py` | 解析测试：59 项正向/反向用例，不需要 Multisim |
 | `ir_compare.py` | 结构比对两个 `.ms14`（元件 / 主参数 / 网络成员 / 探针数） |
 | `fitlib.py` | 正弦最小二乘拟合 + 一阶低通理论值 |
 | `build_rc_lowpass.py` | 用 `add_part` 生成 RC 低通（`--freq` 改激励频率） |
 | `validate_rc.py` | RC 瞬态验证：最小二乘拟合幅值/相位，和理论值比对 |
+| `build_dc.py` | **最小直流电路** `V1→R1→GND`（只调已验证 API，出 `out/dc/dc_min.ms14`） |
+| `dc_run.py` | **直流取数验收**（`--mode transient\|dcop`），docstring 里写死"`EnumOutputs` 只调一次" |
+| `dc_strategies.py` | 直流取数时序实验 S1~S4（`--only` 单独跑；同一进程连跑会退化） |
 | `build_acceptance.py` | 验收电路生成（默认源网探针；`--divider` 出分压器版） |
 | `validate_acceptance.py` | 验收仿真 + 判定（读回电压/电流，比对期望值） |
 | `test_mssafe.py` | 回归测试：4 个原生样本 XML 往返必须逐字节一致 |
@@ -39,6 +42,7 @@
 | 17 | `p17_*` | 探针与引脚普查：`NodeText`、junction、`PortID`、`ConnectList` | `docs/deadends.md` 三～五 |
 | 18 | `p18_*` | **根因定位**：分离容器压缩 vs XML 往返，最终锁定 `CIITDiagram@SimState` | `docs/p0-acceptance.md`、`docs/deadends.md` 六 |
 | 19 | `p19_*` | **探针唯一命名 + 元件定位锚点**：`LocalName` 序号决定 COM 输出名；`add()` 的 `anchor="pin"` | `docs/probe.md` 4.1 |
+| 20 | `out/dc/bisect.py` | **COM 调用顺序**：P0~P4 逐个加一次调用，锁定"`run()` 之后 `EnumOutputs` 会作废输出缓冲" | `docs/dc-static.md` |
 
 ### p18 里最关键的四支（想复现根因就看它们）
 
@@ -56,4 +60,7 @@
 
 - 跑任何 COM 脚本前先 `taskkill /F /IM multisim.exe`，残留进程会导致读到空数据。
 - 一个进程只开一个 `.ms14`。
+- **`EnumOutputs()`（`circ.probes()`）只能在 open 之后调一次**。在 `run()` /
+  `DoDCOperatingPoint()` 之后、`read()` 之前再枚举，会让之后所有 `GetOutputData()`
+  返回 `E_FAIL`，表现像"电路死了"。见 `docs/dc-static.md`。
 - 任何改动 `.ms14` 的代码，XML 读写必须走 `mssafe`，不要用裸 `ET.fromstring` / `ET.tostring`。

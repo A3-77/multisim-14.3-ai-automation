@@ -332,3 +332,61 @@ xml  = mssafe.serialize(tree)   # 写
 而不是元件模型。先用原生文件做一次「只过一遍读写路径」的对照——
 本项目就是这么找到的（`out/p18_R_repack.ms14` vs `out/p18_S_etround.ms14`）。
 
+
+---
+
+## 七、⚠️ 二号坑：`EnumOutputs` 只能调一次（2026-10-26 定论）
+
+### 症状
+
+电路文件没问题（原生脚本能读出 5.0 V），但自己的脚本每个探针都读回：
+
+```
+(-2147467259, '未指定的错误', None, None)
+```
+
+`-2147467259` = `0x80004005` = `E_FAIL`。`transient` 和 `DoDCOperatingPoint`
+**两条路一样失败**，看起来像"引擎拒绝仿真这个电路"。
+
+### 真相
+
+`EnumOutputs()`（COM 侧就是 `circ.probes()`）**在 `run()` 之后调用一次，就把输出缓冲作废了**。
+之后所有 `GetOutputData()` 都返回 `E_FAIL`，而且再枚举一次返回的列表是**空的**。
+
+二分证据（`out/dc/bisect.py`，一个 case 一个进程）：
+
+| case | 相对基线多了什么 | 枚举到 | 读数 |
+|---|---|---|---|
+| P0 | — | 2 | 正常 |
+| P1 | run **之前**多一次 `EnumOutputs` | 2 | 正常 |
+| P2 | 多一次 `EnumComponents` | 2 | 正常 |
+| P3 | 多一次 `RLCValue` | 2 | 正常 |
+| **P4** | **run 之后、read 之前多一次 `EnumOutputs`** | **0** | **全部 E_FAIL** |
+
+### 正确写法
+
+```python
+circ = ms.open(path)
+outs = list(circ.probes())        # 只在这里枚举一次，缓存名字
+for nm in outs:
+    circ.request_output(nm, sr, npts)
+circ.run(...)                     # 或 DoDCOperatingPoint
+for nm in outs:                   # 用缓存的 outs，不要再 EnumOutputs
+    t, v = circ.read(nm)
+```
+
+### 连带作废的假设
+
+- "纯电阻回路没有动态元件，瞬态会立刻结束、`EnumOutputs()` 为空" ——
+  **错**。`DC_POWER + R + GND` 的瞬态跑满 1200 点，每点 5.000000 V。
+  当年"并一个 1pF 电容才跑得起来"绕的是调用顺序，不是仿真引擎。
+- "是分析类型选错了（该用直流工作点）" —— 错。两条路在调用顺序正确时
+  读数完全一致。
+
+### 教训
+
+`E_FAIL` 不等于"仿真失败"，它也可能只是"句柄被你自己的上一步操作弄坏了"。
+先用**仓库里早就验证过的脚本**（`tools/p18_run2.py`）读同一个文件：
+读得出来 ⇒ 文件没问题，查自己的调用序列。
+
+详见 [dc-static.md](dc-static.md)。

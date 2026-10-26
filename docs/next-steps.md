@@ -1,47 +1,71 @@
-# 给接手者的路线图（v0.4.0 起）
+# 给接手者的路线图（v0.5.0 起）
 
-> 上一版这份文档写于 v0.1.0，列的 P0/P1/P2 现在全部做完了。
-> 这一版按 **v0.4.0 的实际状态**重排，只写还没做的事。
+> 上一版写于 v0.4.0，P0（直流源）已经做完了。
+> 这一版按 **v0.5.0 的实际状态**重排，只写还没做的事。
 >
 > 已完成（不要再重做）：`.ms14` 编解码 / `mssafe` 无损往返 / 元件克隆 /
 > 纯代码探针 / 统一 `add_part` / RC 三点频响 / Circuit IR + 校验 /
-> 中文 → IR 端到端。
+> 中文 → IR 端到端 / **直流静态电路（两条路，见 `docs/dc-static.md`）**。
 
 ---
 
-## P0 —— 直流源：让"5V 直流电源串联 1kΩ 电阻接地"这句话能跑
+## P1 —— MCP Tool API：把工具链变成"能被调用"的东西
 
 ### 为什么排第一
 
-这是用户**最初**给的验收句，到现在还没进 IR 白名单。卡点不在解析，在仿真：
+现在这条链是**脚本**，不是**工具**：
 
-`tools/build_acceptance.py` 头注释记着一条实测结论 —— **纯电阻回路没有动态元件，
-瞬态在毫秒级算完，`SimState` 立刻回 `stopped`，`EnumOutputs()` 为空**，
-表现和"引擎拒绝仿真"一模一样。当年是靠并一个 1pF 电容绕过去的。
+```
+nl_run.py --file xxx.txt
+```
+
+每一步（解析、编译、仿真、读数）都焊死在一个脚本里，外面的人只能整条跑。
+LLM 或别的程序想用，只能读代码猜参数。**先把接口定型，再谈接 LLM。**
 
 ### 做什么
 
-1. 把 `("POWER_SOURCES", "DC_POWER")` 加进 `circuit_ir.SUPPORTED`
-   （`add_part` 早就支持，缺的是 IR 白名单和一次真机验收）。
-2. 解决静态电路取数。三条路，按代价排：
-   - **A**：瞬态 + 极小的动态元件（1pF），把 `SimState` 顶住 —— 已验证过的老路，
-     代价是 IR 里多一个用户没要求的元件（要在 IR 里显式表达，不能偷偷加）。
-   - **B**：用直流工作点分析（`DC_OPERATING_POINT`）取数 —— 需要先确认
-     COM 侧这条路能不能 `request_output`。
-   - **C**：导出 SPICE 网表自己算 —— 绕过 Multisim，但也就绕过了"真的在 Multisim 里跑"这个前提。
-3. `nl2ir` 里把"直流电源"从报错改成正常解析（`is_dc` 分支已经写好了，只是抛错）。
+按"一个动作一个工具"拆，参数只接受 Circuit IR 里的概念，不接受 Multisim 概念：
+
+| 工具 | 输入 | 输出 |
+|---|---|---|
+| `create_circuit` | `name` | `circuit_id` |
+| `add_component` | `circuit_id`, `refdes`, `family`, `part`, `value`, `x?`, `y?` | 引脚列表 |
+| `connect` | `circuit_id`, `pins: [(refdes, pin)]`, `net_name?` | `net_id` |
+| `add_probe` | `circuit_id`, `net_id`, `kind="V"` | `probe_id` |
+| `simulate` | `circuit_id`, `analysis: transient\|dc`, `stop?`, `sample_rate?` | `sim_id` |
+| `measure` | `sim_id` | 每通道的拟合值 / 均值、`rlc` |
+| `get_waveform` | `sim_id`, `channel?` | 采样点数组 |
+
+关键约束：
+
+- **无状态服务端**：`circuit_id` / `sim_id` 是句柄，内部映射到 IR 文件路径。
+  IR 本身就是可序列化的状态，不需要额外数据库。
+- **错误一律结构化返回**，不抛裸异常。`validate()` 的 `issues` 列表直接就是
+  `{"ok": false, "issues": [...]}`，现在已经有这个形状了。
+- **一次仿真一个 Multisim 进程**。`EnumOutputs` 只能调一次这条铁律
+  （`docs/dc-static.md`）必须在 `simulate` 里封死，不能让调用方碰。
 
 ### 怎么算完成
 
+`tools/mcp_server.py` 起一个 stdio MCP server，用下面这段等价于
+"5V 串 1kΩ 接地"的调用序列，拿到 5.0 V / 5 mA：
+
 ```
-runtime\py32\python.exe tools\nl_run.py "创建一个 5V 直流电源串联 1kΩ 电阻接地的电路，在电阻两端放电压探针"
+create_circuit("dc_5v")
+  -> add_component(cid, "V1", "POWER_SOURCES", "DC_POWER", 5)
+  -> add_component(cid, "R1", "RESISTOR", "RESISTOR_VIRTUAL", 1000)
+  -> add_component(cid, "GND1", "POWER_SOURCES", "GROUND")
+  -> connect(cid, [("V1","1"), ("R1","1")], "in")
+  -> connect(cid, [("V1","2"), ("GND1","1"), ("R1","2")], "0")
+  -> add_probe(cid, "in"); add_probe(cid, "0")
+  -> simulate(cid, "dc")  -> measure(sid) -> 5.0 / 5.0 / 0.005
 ```
 
-探针读到 5.0 V 与 0 V，差值 5 V（= 5V / 1kΩ = 5 mA 流过 R1）。
+而且 `nl_run.py` 要改成**调这套工具**，不是自己再写一遍 —— 否则就是两套逻辑。
 
 ---
 
-## P1 —— 并联 / 多支路拓扑
+## P2 —— 并联 / 多支路拓扑
 
 ### 为什么
 
@@ -52,16 +76,14 @@ runtime\py32\python.exe tools\nl_run.py "创建一个 5V 直流电源串联 1kΩ
 
 - v0.2.0 已经**证伪**"必须有 junction 结点对象"：3 引脚中点不需要任何结点，
   实测读到 2.5 V（`docs/deadends.md`）。
-- 所以拓扑表达不缺底层能力，缺的是 **IR 层的网络表达能力**（现在的
-  `nets` 是"网络 → 引脚列表"，其实已经能表达任意拓扑）和**布局算法**
-  （现在的坐标是给串联链写死的）。
+- 所以拓扑表达不缺底层能力，缺的是**布局算法** —— 现在的坐标是给串联链写死的。
 
 ### 做什么
 
-1. IR 层不用改：`nets` 本来就是通用的。
+1. IR 层不用改：`nets` 本来就是"网络 → 引脚列表"，能表达任意拓扑。
 2. 写一个布局器：按"源在左、地在下、元件按网络分层"排，输出每个元件的
    引脚质心坐标。先只支持两三个固定模板（分压、旁路电容、T 型网络）。
-3. `nl2ir` 加"并联/并在...两端/和...并联"的句式，映射到对应模板。
+3. `nl2ir` 加"并联 / 并在...两端 / 和...并联"的句式，映射到对应模板。
 
 ### 怎么算完成
 
@@ -70,7 +92,7 @@ runtime\py32\python.exe tools\nl_run.py "创建一个 5V 直流电源串联 1kΩ
 
 ---
 
-## P2 —— 元件库扩容
+## P3 —— 元件库扩容
 
 ### 问题
 
@@ -86,7 +108,7 @@ runtime\py32\python.exe tools\nl_run.py "创建一个 5V 直流电源串联 1kΩ
 
 ---
 
-## P3 —— LLM 外壳（放在最后，不要提前做）
+## P4 —— LLM 外壳（放在最后，不要提前做）
 
 规则解析器已经能覆盖受控句式。LLM 的正确位置是**它前面**：
 
@@ -110,8 +132,9 @@ Circuit IR
 ✅ 从空白电路生成元件 + 连线 + 探针，Multisim 正常打开、真实仿真
 ✅ RC 低通三点频响全部对上理论
 ✅ Circuit IR + 编译前校验（26 项反向用例）
-✅ 中文 → IR → 仿真（46 项解析用例；1 kHz / 2 kHz 两个电路真机验收）
-⬜ 直流源（静态电路取数）
+✅ 中文 → IR → 仿真（59 项解析用例；1 kHz / 2 kHz 两个电路真机验收）
+✅ 直流静态电路（transient 与 DC Operating Point 两条路读数一致）
+⬜ MCP Tool API
 ⬜ 并联 / 多支路布局
 ⬜ 多引脚元件（运放 / 555）
 ⬜ LLM 外壳

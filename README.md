@@ -1,5 +1,51 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## ✅ v0.5.0（2026-10-26）：直流静态电路 —— 一个假问题，一个真根因
+>
+> 用户最初给的验收句终于跑通了：
+>
+> > **"创建一个 5V 直流电源串联 1kΩ 电阻接地，并测量电阻两端电压。"**
+>
+> ```
+> V(in)=5.000000 V   V(0)=0.000000 V   V_R=5.000000 V
+> R=1000.0 Ω（Multisim RLCValue 报的）  I=V_R/R=0.005000 A
+> ```
+>
+> **1. "直流取不到数"是误诊**
+>
+> 老结论说"纯电阻回路没有动态元件，瞬态立刻结束，`EnumOutputs()` 为空"。
+> 实测推翻：`DC_POWER + R + GND` 的瞬态跑满 **1200 点**，每点都是 5.000000 V。
+> 当年"并一个 1pF 电容才跑得起来"绕的不是仿真引擎。
+>
+> **2. 真根因：`EnumOutputs` 不能调第二次**
+>
+> 二分实验（`out/dc/bisect.py`，一个 case 一个进程）：
+>
+> | case | 多了什么 | 枚举到 | 读数 |
+> | --- | --- | --- | --- |
+> | P0–P3 | run **之前**枚举 / `EnumComponents` / `RLCValue` | 2 | 正常 |
+> | **P4** | **run 之后、read 之前再枚举一次** | **0** | **全部 E_FAIL** |
+>
+> `E_FAIL` 不是"电路死了"，是**句柄被自己作废了**。
+> 现在 `EnumOutputs` 只在 open 后调一次、缓存名字，`simulate()`（AC 内核）
+> 本来就是这么写的，**一行没改**。
+>
+> **3. 两条路读数完全一致**
+>
+> 同一个 `out/dc/dc_min.ms14`，`transient`（1200 点/探针）与
+> `DoDCOperatingPoint`（1 点/探针）给出同样的 5.0 / 0.0 / 5.0 / 1000.0 / 0.005。
+> 默认走 dcop —— 静态电路没有时间维度，不该让用户看到一条平的"波形"。
+>
+> **4. 电流的来源不糊弄**
+>
+> Multisim 电压探针只给电压。`I = V_R / R`，`V_R` 是探针实测，
+> `R` 是 Multisim 自己 `RLCValue` 报的 1000.0（不是从 IR 抄的），
+> 顺带验证了 IR 写的值和 Multisim 读到的一致。**没有假装用了电流探针。**
+>
+> 细节与复现步骤：**`docs/dc-static.md`**
+>
+> ---
+>
 > ## ✅ v0.4.0（2026-10-26）：一句话生成电路
 >
 > v0.3.0 把中间层立起来了，但入口还是 JSON。v0.4.0 接上了最上面那一环：
@@ -136,6 +182,7 @@
 | [docs/ms14-format.md](docs/ms14-format.md) | **`.ms14` 文件格式完整规范**：PKWARE DCL 压缩算法 + 分块容器 + 字节级细节 |
 | [docs/circuit-xml.md](docs/circuit-xml.md) | **电路 XML 对象模型**：两棵平行树、坐标系、引脚几何公式、参数存储位置 |
 | [docs/nl2ir.md](docs/nl2ir.md) | **中文 → Circuit IR**：支持的句式、解析算法、错误哲学、边界 |
+| [docs/dc-static.md](docs/dc-static.md) | **直流静态电路**：`EnumOutputs` 只能调一次的根因、两条取数路径、复现与排错顺序 |
 | [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
 | [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
 | [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
@@ -393,9 +440,57 @@ runtime\py32\python.exe tools/nl_run.py --file examples/nl/rc_lowpass.txt
 
 第一行的增益/相位与**直接调用 `add_part` 的基线逐位相同**（Δ=0.00e+00 / Δ=0.000°）。
 
-解析层的反向用例（46 项，`tools/test_nl2ir.py`）：缺频率 / 缺阻值 / 并联 /
-电感 / 运放 / 直流源 / 交流分析 / 探针位置不明 / 修改已有电路 —— 全部在
+解析层的反向用例（59 项，`tools/test_nl2ir.py`）：缺频率 / 缺阻值 / 并联 /
+电感 / 运放 / 直流源带频率 / 交流分析 / 探针位置不明 / 修改已有电路 —— 全部在
 生成任何文件之前报错。详细语法与算法见 [docs/nl2ir.md](docs/nl2ir.md)。
+
+### 3.7 直流静态电路：V1 → R1 → 地（v0.5.0）
+
+```bash
+# 最小电路（只调已验证的 add_part / connect / add_probe_ext）
+python tools/build_dc.py                       # -> out/dc/dc_min.ms14
+
+# 两条取数路径各跑一次
+runtime\py32\python.exe -u tools/dc_run.py --mode transient
+runtime\py32\python.exe -u tools/dc_run.py --mode dcop
+
+# 中文端到端
+runtime\py32\python.exe -u tools/nl_run.py --file examples/nl/dc_5v.txt
+```
+
+输入：`创建一个 5V 直流电源串联 1kΩ 电阻接地，并测量电阻两端电压。`
+
+```
+[1] 中文 -> Circuit IR
+  我理解成：V1 是 5 V 直流源；R1 是 1000Ω；串联顺序 V1.+ → R1 → 地；
+           网络 in = V1.+ + R1.1；网络 0 = V1.- + GND1.1 + R1.2；
+           探针 P1@in、P2@0；仿真 dc（直流工作点，单点）
+
+[3] Multisim 直流工作点
+  outputs: ['V(探针1)', 'V(探针2)']
+
+[4] 读数
+  net in -> V(探针1)  V=5.000000 V
+  net 0  -> V(探针2)  V=0.000000 V
+  电阻电压 5.000000 V，R=1000 Ω（Multisim RLCValue），I=0.005000 A
+```
+
+两条路径的读数**完全一致**：
+
+| | `transient` | `DoDCOperatingPoint` |
+| --- | --- | --- |
+| 每个探针的采样点 | 1200 | 1 |
+| `V(in)` / `V(0)` | 5.000000 / 0.000000 | 5.000000 / 0.000000 |
+| `V_R` | 5.000000 | 5.000000 |
+| `R`（Multisim 报的） | 1000.0 | 1000.0 |
+| `I = V_R / R` | 0.005000 A | 0.005000 A |
+
+**电流不是理想电流探针测的**：Multisim 电压探针只给电压，`I` 是 `V_R / R`，
+其中 `R` 来自 Multisim 的 `RLCValue`（顺带验证 IR 写的 1000 与 Multisim 读的一致）。
+
+> ⚠️ **踩过的坑**：`EnumOutputs()`（`circ.probes()`）只能在 open 之后调一次。
+> 在 `run()` 之后、`read()` 之前再枚举一次，会让之后所有 `GetOutputData()`
+> 返回 `E_FAIL`，表现像"电路死了"。完整二分证据见 [docs/dc-static.md](docs/dc-static.md)。
 
 ---
 
@@ -460,6 +555,7 @@ multisim-ctrl/
 │   ├── probe.md               探针结构 + GUI 放置流程
 │   ├── architecture.md        代码架构
 │   ├── deadends.md            死路清单与避坑
+│   ├── dc-static.md           直流静态电路：EnumOutputs 只能调一次的根因
 │   ├── next-steps.md          路线图
 │   ├── api.md                 COM API 全表（旧路线留存）
 │   └── shots/                 关键截图（8 张，按时间顺序）
@@ -477,11 +573,14 @@ multisim-ctrl/
 │   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
 │   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
 │   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
-│   ├── test_nl2ir.py          ★ 解析测试：46 项正向/反向用例
+│   ├── test_nl2ir.py          ★ 解析测试：59 项正向/反向用例
 │   ├── ir_compare.py          结构比对两个 .ms14
 │   ├── fitlib.py              正弦最小二乘拟合 + 一阶低通理论值
 │   ├── build_rc_lowpass.py    ★ 用 add_part 生成 RC 低通（`--freq` 改频率）
 │   ├── validate_rc.py         ★ RC 瞬态验证（最小二乘拟合幅值/相位 vs 理论）
+│   ├── build_dc.py            ★ 最小直流电路 V1→R1→GND（只调已验证 API）
+│   ├── dc_run.py              ★ 直流取数验收（`--mode transient|dcop`）
+│   ├── dc_strategies.py       直流取数时序实验（S1~S4，`--only` 单独跑）
 │   ├── build_acceptance.py    ★ 验收电路生成脚本（`--divider` 出分压器版本）
 │   ├── validate_acceptance.py ★ 验收仿真（读回电压 + 判定）
 │   ├── test_mssafe.py         ★ 回归测试：XML 往返必须逐字节一致
@@ -541,19 +640,22 @@ multisim-ctrl/
 - **Circuit IR 端到端跑通**：IR → `.ms14` → 仿真 → 拟合，结果与直接调用
   `add_part` **完全一致**（增益 Δ=0、相位 Δ=0.000°）
 - **IR 校验在落盘前拦截错误**：26 个反向用例（`tools/test_ir_validate.py`）
-- **中文 → Circuit IR**：46 项解析测试（`tools/test_nl2ir.py`），
+- **中文 → Circuit IR**：59 项解析测试（`tools/test_nl2ir.py`），
   验收句解析结果与 `examples/rc_lowpass.ir.json` 字段逐个相等
 - **中文端到端**：1 kHz / 2 kHz 两个电路真跑 Multisim，增益与相位均对上理论，
   1 kHz 那组与直接 `add_part` 的基线**逐位相同**（Δ=0.00e+00 / Δ=0.000°）
+- **直流静态电路（`DC_POWER` + R + GND）**：`transient`（1200 点/探针）与
+  `DoDCOperatingPoint`（1 点/探针）两条路读数完全一致 ——
+  `V(in)=5.000000`、`V(0)=0.000000`、`V_R=5.000000`、`R=1000.0`（Multisim 报的）、
+  `I=V_R/R=0.005000 A`。中文验收句端到端跑通（`docs/dc-static.md`）
+- **COM 调用顺序**：`EnumOutputs` 在 `run()` 之后调会作废输出缓冲
+  （二分证据 P0~P4 见 `out/dc/bisect_*.json`）
 
-### ⬜ 未验证（接手后第一件事）
+### ⬜ 未验证（路线图见 [docs/next-steps.md](docs/next-steps.md)）
 
 - `RESISTOR_RATED` / `CAPACITOR_RATED`（family `RATED_VIRTUAL`）路线
 - 运放、555 等多引脚元件的通用 `add_part` 支持
 - 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
-- **直流源（`DC_POWER`）**：纯电阻回路没有动态元件，瞬态会立刻结束、
-  探针注册不上（`build_acceptance.py` 头注释记录了这条），所以原始验收句
-  "5V 直流电源串联 1kΩ 电阻接地" 还没进 IR 白名单
 - **并联 / 多支路拓扑**：布局与连线未验证
 
 ### ❓ 已知未知
