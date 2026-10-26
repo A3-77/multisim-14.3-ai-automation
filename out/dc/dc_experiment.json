@@ -1,0 +1,95 @@
+{
+  "ms14": "out/dc/v4_ac_r_c.ms14",
+  "outputs_on_open": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "components": [
+    "C1",
+    "R1",
+    "V1"
+  ],
+  "runs": [
+    {
+      "path": "transient",
+      "requests": [
+        {
+          "name": "V(探针1)",
+          "ok": true,
+          "n": 1200
+        },
+        {
+          "name": "V(探针2)",
+          "ok": true,
+          "n": 1200
+        }
+      ],
+      "waits": [
+        {
+          "got": [
+            "V(探针1)",
+            "V(探针2)"
+          ],
+          "timeout": false,
+          "state": "0"
+        }
+      ],
+      "read": {
+        "V(探针1)": {
+          "err": "(-2147467259, '未指定的错误', None, None)"
+        },
+        "V(探针2)": {
+          "err": "(-2147467259, '未指定的错误', None, None)"
+        }
+      },
+      "errors": [
+        "read(V(探针1)): (-2147467259, '未指定的错误', None, None)",
+        "read(V(探针2)): (-2147467259, '未指定的错误', None, None)"
+      ],
+      "state_before": "0",
+      "run_ok": true,
+      "state_after_run": "0",
+      "outputs_after_run": [
+        "V(探针1)",
+        "V(探针2)"
+      ],
+      "state_after_stop": "0"
+    },
+    {
+      "path": "dc_op",
+      "calls": [
+        {
+          "DoDCOperatingPoint": "ok"
+        }
+      ],
+      "read": {
+        "V(探针1)": {
+          "err": "(-2147467259, '未指定的错误', None, None)"
+        },
+        "V(探针2)": {
+          "err": "(-2147467259, '未指定的错误', None, None)"
+        }
+      },
+      "errors": [
+        "read(V(探针1)): (-2147467259, '未指定的错误', None, None)",
+        "read(V(探针2)): (-2147467259, '未指定的错误', None, None)"
+      ],
+      "state_before": "0",
+      "state_after_call": "1",
+      "waits": [
+        {
+          "got": [
+            "V(探针1)",
+            "V(探针2)"
+          ],
+          "timeout": false,
+          "state": "0"
+        }
+      ],
+      "outputs_after_call": [
+        "V(探针1)",
+        "V(探针2)"
+      ]
+    }
+  ]
+}

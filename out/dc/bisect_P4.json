@@ -1,0 +1,25 @@
+{
+  "ms14": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\dc\\v1_dc_r.ms14",
+  "case": {
+    "case": "P4 run 后、read 前再 EnumOutputs",
+    "preamble": [
+      [
+        "probes_after_run",
+        [
+          "V(探针1)",
+          "V(探针2)"
+        ]
+      ]
+    ],
+    "state": "0",
+    "got": [],
+    "read": {
+      "V(探针1)": {
+        "err": "(-2147467259, '未指定的错误', None, None)"
+      },
+      "V(探针2)": {
+        "err": "(-2147467259, '未指定的错误', None, None)"
+      }
+    }
+  }
+}

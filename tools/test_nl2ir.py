@@ -145,6 +145,35 @@ check("网络只有 in / 0", [n.name for n in ir.nets] == ["in", "0"],
 check("探针在 in 和 0", [p.net for p in ir.probes] == ["in", "0"],
       str([p.net for p in ir.probes]))
 
+print("\n[正向] 直流电路（v0.5.0：静态取数走直流工作点）")
+ir, rep = ok("创建一个 5V 直流电源串联 1kΩ 电阻接地，并测量电阻两端电压。")
+check("源是 DC_POWER", ir.component("V1").part == "DC_POWER",
+      ir.component("V1").part)
+check("电压 5 V", abs(ir.component("V1").value - 5.0) < 1e-12,
+      "%g" % ir.component("V1").value)
+check("没有频率参数（直流源没有 freq）", not ir.component("V1").params,
+      str(ir.component("V1").params))
+check("分析类型 = dc", ir.simulation.analysis == "dc", ir.simulation.analysis)
+check("网络只有 in / 0", [n.name for n in ir.nets] == ["in", "0"],
+      str([n.name for n in ir.nets]))
+check("'测量电阻两端电压' → 两个探针 in/0",
+      [p.net for p in ir.probes] == ["in", "0"], str([p.net for p in ir.probes]))
+
+ir, rep = ok("5V 直流电源，串联 1kΩ 电阻到地，在电阻两端各放一个电压探针。")
+check("'在...两端放探针' 也能描述直流电路",
+      [p.net for p in ir.probes] == ["in", "0"] and ir.simulation.analysis == "dc",
+      str([p.net for p in ir.probes]))
+
+ir, rep = ok("5V 直流电源串联 1kΩ 电阻接地，在电阻两端放探针，做瞬态分析。")
+check("明写'瞬态'时直流源也走 transient",
+      ir.simulation.analysis == "transient" and ir.simulation.stop > 0,
+      "%s stop=%g" % (ir.simulation.analysis, ir.simulation.stop))
+
+ir, rep = ok("5V 直流电源串联 1kΩ 电阻接地，在电阻两端放探针，做直流工作点分析。")
+check("明写'直流工作点'对直流源合法，仍走 dc",
+      ir.simulation.analysis == "dc" and ir.simulation.stop == 0,
+      "%s stop=%g" % (ir.simulation.analysis, ir.simulation.stop))
+
 # ---------------------------------------------------------------- 反向
 print("\n[反向] 缺信息 / 不支持的拓扑与元件，必须报错并说清原因")
 bad("", "描述为空")
@@ -154,13 +183,13 @@ bad("经过 1kΩ 电阻接 159nF 电容到地，在输出放探针。", "没找�
 bad("1V 1kHz 正弦源和 1kΩ 电阻并联，到地，在输出放探针。", "只支持")
 bad("1V 1kHz 正弦源，经过 10mH 电感到地，在输出放探针。", "不在已验证白名单")
 bad("1V 1kHz 正弦源，经过一个运放到地，在输出放探针。", "不在已验证白名单")
-bad("创建一个 5V 直流电源串联 1kΩ 电阻接地的电路，在电阻两端放电压探针。", "直流源")
+bad("5V 1kHz 直流电源，串联 1kΩ 电阻接地，在电阻两端放探针。", "不该带频率")
 bad("1V 正弦源，经过 1kΩ 电阻接 159nF 电容到地，在输出放探针。", "没给频率")
 bad("1V 1kHz 正弦源，经过 1kΩ 电阻接电容到地，在输出放探针。", "没给容值")
 bad("1V 1kHz 正弦源，经过电阻接 159nF 电容到地，在输出放探针。", "没给阻值")
 bad("把 R1 改成 2kΩ。", "只支持从零新建")
-bad("1V 1kHz 正弦源，经过 1kΩ 电阻接 159nF 电容到地，做交流分析。", "只支持瞬态")
-bad("1V 1kHz 正弦源，经过 1kΩ 电阻接 159nF 电容到地，做直流工作点分析。", "只支持瞬态")
+bad("1V 1kHz 正弦源，经过 1kΩ 电阻接 159nF 电容到地，做交流分析。", "支持的分析只有瞬态")
+bad("1V 1kHz 正弦源，经过 1kΩ 电阻接 159nF 电容到地，做直流工作点分析。", "不是直流源")
 bad("1V 1kHz 正弦源，经过 1kΩ 电阻接 159nF 电容到地，在探针放一个电压探针。", "看不懂探针位置")
 bad("1V 1kHz 正弦源，经过 1kΩ 电阻、1kΩ 电阻、159nF 电容到地，在输出放探针。",
     "超过已验证上限")

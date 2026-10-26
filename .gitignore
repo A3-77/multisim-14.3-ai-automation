@@ -26,6 +26,12 @@ out/*
 !out/nl/*.waveform.csv
 !out/nl/*.compile.json
 out/nl/*.ms14
+# 直流静态电路取数的证据（docs/dc-static.md 直接引用，必须能被点开）
+!out/dc/
+!out/dc/*.json
+!out/dc/*.csv
+!out/dc/*.py
+out/dc/*.ms14
 
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/

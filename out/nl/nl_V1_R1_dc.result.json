@@ -1,0 +1,51 @@
+{
+  "text": "创建一个 5V 直流电源串联 1kΩ 电阻接地，并测量电阻两端电压。",
+  "ir": "out\\nl\\nl_V1_R1_dc.ir.json",
+  "ms14": "out\\nl\\nl_V1_R1_dc.ms14",
+  "analysis": "dc",
+  "understood": "V1 是 5 V 直流源；R1 是 1000Ω；串联顺序 V1.+ → R1 → 地；网络 in = V1.+ + R1.1；网络 0 = V1.- + GND1.1 + R1.2；探针 P1@in、P2@0；仿真 dc（直流工作点，单点）",
+  "outputs": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "state": "0",
+  "rlc_reported_by_multisim": {
+    "R1": 1000.0
+  },
+  "measure": {
+    "mode": "dc",
+    "channels": {
+      "in": {
+        "output": "V(探针1)",
+        "mean": 5.0,
+        "min": 5.0,
+        "max": 5.0,
+        "n": 1
+      },
+      "0": {
+        "output": "V(探针2)",
+        "mean": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 1
+      }
+    },
+    "v_in": 5.0,
+    "v_gnd": 0.0,
+    "v_resistor": 5.0,
+    "r_reported_by_multisim": 1000.0,
+    "current": 0.005,
+    "source_amp": 5.0,
+    "source_refdes": "V1"
+  },
+  "theory": {
+    "kind": "dc_series_r",
+    "v": 5.0,
+    "r": 1000.0,
+    "v_resistor": 5.0,
+    "current": 0.005
+  },
+  "pass": true,
+  "fails": [],
+  "csv": "out\\nl\\nl_V1_R1_dc.waveform.csv"
+}

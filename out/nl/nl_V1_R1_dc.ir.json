@@ -1,0 +1,77 @@
+{
+  "name": "nl_V1_R1_dc",
+  "components": [
+    {
+      "refdes": "V1",
+      "family": "POWER_SOURCES",
+      "part": "DC_POWER",
+      "value": 5.0,
+      "params": {},
+      "position": [
+        300.0,
+        300.0
+      ]
+    },
+    {
+      "refdes": "R1",
+      "family": "RESISTOR",
+      "part": "RESISTOR_VIRTUAL",
+      "value": 1000.0,
+      "params": {},
+      "position": [
+        500.0,
+        300.0
+      ]
+    },
+    {
+      "refdes": "GND1",
+      "family": "POWER_SOURCES",
+      "part": "GROUND",
+      "value": null,
+      "params": {},
+      "position": [
+        300.0,
+        420.0
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "name": "in",
+      "pins": [
+        "V1.+",
+        "R1.1"
+      ]
+    },
+    {
+      "name": "0",
+      "pins": [
+        "V1.-",
+        "GND1.1",
+        "R1.2"
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "refdes": "P1",
+      "kind": "V",
+      "net": "in",
+      "at": null
+    },
+    {
+      "refdes": "P2",
+      "kind": "V",
+      "net": "0",
+      "at": null
+    }
+  ],
+  "simulation": {
+    "analysis": "dc",
+    "start": 0.0,
+    "stop": 0.0,
+    "step": null,
+    "sample_rate": 0.0
+  },
+  "version": 1
+}

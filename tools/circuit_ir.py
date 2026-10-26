@@ -27,12 +27,16 @@
 
 仿真块说明
 ----------
-    analysis    目前只支持 "transient"
-    start/stop  秒
-    sample_rate 采样率 Hz（COM 侧 request_output 用）
-    step        None 表示由求解器自适应；给了就当作期望步长记录下来
+    analysis    "transient"（时域）或 "dc"（直流工作点，单点）
+    start/stop  秒（仅 transient 用）
+    sample_rate 采样率 Hz（COM 侧 request_output 用，仅 transient 用）
+    step        None 表示由求解器自适应；给了就当作期望步长记录下来（仅 transient 用）
 
-    IR 本身不跑仿真。仿真设置由 tools/ir_run.py 读取后交给验证脚本执行。
+    analysis="dc" 时 start/stop/sample_rate/step 都不参与校验也不参与执行 ——
+    静态电路没有时间维度。实测两条路给出的电压完全一致
+    （out/dc/dc_result_transient.json vs out/dc/dc_result_dcop.json）。
+
+    IR 本身不跑仿真。仿真设置由 tools/nl_run.py 读取后交给验证脚本执行。
 """
 import json
 import re
@@ -44,12 +48,13 @@ IR_VERSION = 1
 # 加新元件必须先在 Multisim 里跑通仿真，不要凭"样例里有"就加进来。
 SUPPORTED = {
     ("SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE"): {"pins": ("1", "2"), "aliases": {"+": "1", "-": "2"}},
+    ("POWER_SOURCES", "DC_POWER"): {"pins": ("1", "2"), "aliases": {"+": "1", "-": "2"}},
     ("RESISTOR", "RESISTOR_VIRTUAL"): {"pins": ("1", "2"), "aliases": {}},
     ("CAPACITOR", "CAPACITOR_VIRTUAL"): {"pins": ("1", "2"), "aliases": {}},
     ("POWER_SOURCES", "GROUND"): {"pins": ("1",), "aliases": {}},
 }
 
-ANALYSES = ("transient",)
+ANALYSES = ("transient", "dc")
 
 _REFDES_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -333,6 +338,9 @@ class CircuitIR:
         if s.analysis not in ANALYSES:
             errs.append("simulation.analysis=%r 不支持（可用：%s）"
                         % (s.analysis, ", ".join(ANALYSES)))
+        if s.analysis == "dc":
+            # 直流工作点是单点分析：没有时间窗口，stop / sample_rate / step 都不适用
+            return errs
         try:
             start, stop = float(s.start or 0.0), float(s.stop or 0.0)
         except (TypeError, ValueError):

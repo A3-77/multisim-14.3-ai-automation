@@ -1,0 +1,32 @@
+{
+  "ms14": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\dc\\v1_dc_r.ms14",
+  "case": {
+    "case": "P1 + 二次 EnumOutputs",
+    "preamble": [
+      [
+        "probes2",
+        [
+          "V(探针1)",
+          "V(探针2)"
+        ]
+      ]
+    ],
+    "state": "0",
+    "got": [
+      "V(探针1)",
+      "V(探针2)"
+    ],
+    "read": {
+      "V(探针1)": {
+        "n": 1200,
+        "min": 4.999999999999999,
+        "max": 5.000000000000001
+      },
+      "V(探针2)": {
+        "n": 1200,
+        "min": 0.0,
+        "max": 0.0
+      }
+    }
+  }
+}

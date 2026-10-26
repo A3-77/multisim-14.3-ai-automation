@@ -22,7 +22,8 @@ LLM 的位置在更上层：把自由表述规范化成受控句式，再交给�
 元件（值在前或在后都行）
     "1kΩ 电阻" / "电阻 1kΩ" / "电阻 R1 = 1kΩ" / "R1 为 1kΩ"
     "159nF 电容" / "电容 159nF" / "C1 是 159nF"
-    "1V、1kHz 正弦源" / "1V 1kHz 交流电压源" / "5V 直流电源"（直流会明确报不支持）
+    "1V、1kHz 正弦源" / "1V 1kHz 交流电压源"
+    "5V 直流电源" / "5V 直流源"（静态电路 → 默认走直流工作点分析）
     "接地" / "到地" / "GND"
 
 拓扑（串联链）
@@ -34,11 +35,14 @@ LLM 的位置在更上层：把自由表述规范化成受控句式，再交给�
     "在输出节点放一个电压探针"
     "在输入节点和输出节点各放一个电压探针"（一句话两个探针）
     "在 R1 两端放电压探针" / "在电阻两端各放一个电压探针"（两端 = 两个网络各一个）
+    "测量电阻两端电压" / "测量 R1 的电压"（不带"探针"两个字，语义一样）
 
 仿真
-    "做瞬态分析"（默认）、"仿真 6ms"、"仿真 6 个周期"、"采样率 200kHz"
-    没写时长 → 6 个信号周期；没写采样率 → 200 × 信号频率
-    "交流分析 / 扫频 / 直流工作点" → 明确报"暂不支持"
+    "做瞬态分析"、"仿真 6ms"、"仿真 6 个周期"、"采样率 200kHz"
+    正弦源没写时长 → 6 个信号周期；没写采样率 → 200 × 信号频率
+    直流源 → 默认 analysis="dc"（直流工作点，单点）；只有明写"瞬态"才跑时域
+    "直流工作点" 对直流源合法（等价于默认），对正弦源报"暂不支持"
+    "交流分析 / 扫频" → 明确报"暂不支持"
 
 用法
 ----
@@ -144,9 +148,9 @@ _REFDES_KIND = {"R": "resistor", "C": "capacitor", "V": "source"}
 _GROUND_RE = re.compile(r"接地|到地|接到地|连到地|地线|公共端|GND")
 
 _SIM_TRANSIENT = re.compile(r"瞬态|时域|transient", re.I)
+_SIM_DCOP = re.compile(r"直流工作点|静态工作点|DC\s*分析|工作点分析", re.I)
 _SIM_UNSUPPORTED = (
     (re.compile(r"交流分析|AC\s*分析|频率响应|扫频|幅频|相频|波特", re.I), "交流/扫频分析"),
-    (re.compile(r"直流工作点|静态工作点|DC\s*分析|工作点分析", re.I), "直流工作点分析"),
     (re.compile(r"蒙特卡洛|温度扫描|参数扫描|噪声分析|失真分析"), "高级分析"),
 )
 _STOP_TIME_RE = re.compile(r"仿真\s*(?:时间|时长|窗口)?\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(%s)"
@@ -158,6 +162,9 @@ _PROBE_RE = re.compile(
     r"(?:在|于)\s*([^,;。]{0,26}?)\s*(?:各)?\s*"
     r"(?:放|放置|加|添加|接|布)\s*(?:置|上)?\s*"
     r"(?:一个|1个|两个|2个|各一个|各1个)?\s*(?:电压)?\s*探针")
+
+# "测量电阻两端电压" 这种说法不带"探针"两个字，但语义就是放探针
+_MEASURE_RE = re.compile(r"测量\s*([^,;。]{0,24}?)\s*(?:两端)?\s*的?\s*电压")
 
 _MODIFY_RE = re.compile(r"改成|改为|修改|删掉|删除|去掉|把.*换|替换")
 
@@ -314,16 +321,18 @@ def parse(text, name=None, strict=True):
     m = _SIM_UNSUPPORTED[0][0].search(t)
     if m:
         raise NLParseError([
-            "只支持瞬态分析（transient）。检测到 %r —— %s 暂未接入 IR，"
-            "因为 COM 侧取数路径还没验证过。" % (m.group(0), "交流/扫频分析")
+            "支持的分析只有瞬态（transient）和直流工作点（dc）。检测到 %r —— %s "
+            "暂未接入 IR，因为 COM 侧取数路径还没验证过。" % (m.group(0), "交流/扫频分析")
         ], raw)
     for pat, label in _SIM_UNSUPPORTED[1:]:
         m = pat.search(t)
         if m:
             raise NLParseError([
-                "只支持瞬态分析（transient）。检测到 %r —— %s 暂未接入 IR。"
+                "支持的分析只有瞬态（transient）和直流工作点（dc）。检测到 %r —— %s 暂未接入 IR。"
                 % (m.group(0), label)
             ], raw)
+    # "直流工作点"本身不报错，等源类型确定后再判：直流源合法，正弦源不合法
+    dcop_word = _SIM_DCOP.search(t)
     if _SIM_TRANSIENT.search(t):
         notes.append("分析类型：瞬态（transient）")
 
@@ -349,8 +358,12 @@ def parse(text, name=None, strict=True):
     # ---------- 2) 探针短语（先摘出来，再 mask，避免"在电阻两端"被当成新元件） ----------
     probe_phrases = []
     for m in _PROBE_RE.finditer(t):
-        probe_phrases.append((m.start(), m.end(), m.group(1).strip()))
+        probe_phrases.append((m.start(), m.end(), m.group(1).strip(), "probe"))
         spans.append(m.span())
+    for m in _MEASURE_RE.finditer(t):
+        probe_phrases.append((m.start(), m.end(), m.group(1).strip(), "measure"))
+        spans.append(m.span())
+    probe_phrases.sort()
     if probe_phrases:
         notes.append("探针描述：%s"
                      % " / ".join("「%s」" % p[2] for p in probe_phrases))
@@ -443,10 +456,15 @@ def parse(text, name=None, strict=True):
                 continue
             is_dc = ("直流" in word) or (not freq and not re.search(r"正弦|交流|信号", word))
             if is_dc:
-                issues.append(
-                    "电源 %r 看着是直流源。直流源（POWER_SOURCES/DC_POWER）"
-                    "不在已验证白名单里 —— 当前只有 SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE。"
-                    "请给正弦源：'1V 1kHz 正弦源'。" % word)
+                if freq:
+                    issues.append("直流源 %r 不该带频率（%s）。要正弦源请写'正弦源'。"
+                                  % (word, "、".join(f[5] for f in freq)))
+                    continue
+                source = {
+                    "refdes": refdes or "V1", "family": "POWER_SOURCES",
+                    "part": "DC_POWER", "value": volt[0][2],
+                    "params": {}, "amp": volt[0][2], "freq": None, "dc": True,
+                }
                 continue
             if not freq:
                 issues.append("正弦源 %r 没给频率（例：'1V 1kHz 正弦源'）" % word)
@@ -459,6 +477,7 @@ def parse(text, name=None, strict=True):
                 "refdes": refdes or "V1", "family": "SIGNAL_VOLTAGE_SOURCES",
                 "part": "AC_VOLTAGE", "value": volt[0][2],
                 "params": {5: freq[0][2]}, "amp": volt[0][2], "freq": freq[0][2],
+                "dc": False,
             }
             continue
 
@@ -545,12 +564,16 @@ def parse(text, name=None, strict=True):
                 return [nets[i]["name"], nets[i + 1]["name"]]
         return []
 
-    for (_s, _e, phrase) in probe_phrases:
+    for (_s, _e, phrase, mode) in probe_phrases:
         parts = [p for p in re.split(r"和|与|、|,|\+", phrase) if p.strip()]
         for part in parts:
             part = part.strip()
             if not part:
                 continue
+            # "测量电阻电压"：说的是元件，语义就是"量它两端"
+            if mode == "measure" and not re.search(r"输出|输入|节点|地|gnd|out|in\b",
+                                                   part, re.I):
+                part = part + "两端"
             if "两端" in part or "两侧" in part:
                 head = re.split(r"两端|两侧", part)[0].strip()
                 rd = None
@@ -600,15 +623,39 @@ def parse(text, name=None, strict=True):
 
     # ---------- 7) 仿真默认值 ----------
     freq = source["freq"]
-    if sim["stop"] is None:
-        if period_m:
-            sim["stop"] = int(period_m.group(1)) / freq
+    if dcop_word and not source.get("dc"):
+        raise NLParseError([
+            "检测到 %r，但源 %s 不是直流源。直流工作点只对直流/静态电路验证过；"
+            "正弦源请写'做瞬态分析'。" % (dcop_word.group(0), source["refdes"])
+        ], raw)
+    if source.get("dc"):
+        # 直流源：静态电路没有时间维度，默认走直流工作点（单点）。
+        # 只有描述里明确写了"瞬态"才跑时域（实测两条路读数完全一致，
+        # 见 out/dc/dc_result_transient.json 与 dc_result_dcop.json）。
+        if _SIM_TRANSIENT.search(t):
+            sim["analysis"] = "transient"
+            if sim["stop"] is None:
+                sim["stop"] = 0.006
+                notes.append("仿真时长：未指定 → 0.006 s（静态电路跑时域只是为了拿一条平线）")
+            if sim["sample_rate"] is None:
+                sim["sample_rate"] = 200000.0
+                notes.append("采样率：未指定 → 200000 Hz")
         else:
-            sim["stop"] = 6.0 / freq          # 6 个周期
-            notes.append("仿真时长：未指定 → 6 个周期 = %s s" % _fmt_value(sim["stop"]))
-    if sim["sample_rate"] is None:
-        sim["sample_rate"] = 200.0 * freq      # 每周期 200 点
-        notes.append("采样率：未指定 → 200 × 频率 = %s Hz" % _fmt_value(sim["sample_rate"]))
+            sim["analysis"] = "dc"
+            sim["stop"] = 0.0
+            sim["sample_rate"] = 0.0
+            notes.append("分析类型：直流工作点（静态电路，单点，没有时间窗口）")
+    else:
+        if sim["stop"] is None:
+            if period_m:
+                sim["stop"] = int(period_m.group(1)) / freq
+            else:
+                sim["stop"] = 6.0 / freq          # 6 个周期
+                notes.append("仿真时长：未指定 → 6 个周期 = %s s" % _fmt_value(sim["stop"]))
+        if sim["sample_rate"] is None:
+            sim["sample_rate"] = 200.0 * freq      # 每周期 200 点
+            notes.append("采样率：未指定 → 200 × 频率 = %s Hz"
+                         % _fmt_value(sim["sample_rate"]))
 
     # ---------- 8) 装配 IR ----------
     comps_out = []
@@ -630,10 +677,10 @@ def parse(text, name=None, strict=True):
 
     d = {
         "version": IR_VERSION,
-        # 名字里带位号和频率，两个不同频率的 RC 才不会互相覆盖产物
-        "name": name or ("nl_%s_%gHz" % ("_".join([source["refdes"]] +
-                                                  [p["refdes"] for p in passives]),
-                                         source["freq"])),
+        # 名字里带位号和激励，不同参数的电路才不会互相覆盖产物
+        "name": name or ("nl_%s_%s" % (
+            "_".join([source["refdes"]] + [p["refdes"] for p in passives]),
+            ("%gHz" % source["freq"]) if source["freq"] else "dc")),
         "components": comps_out,
         "nets": [{"name": n["name"], "pins": n["pins"]} for n in nets],
         "probes": probes,
@@ -668,14 +715,19 @@ def parse(text, name=None, strict=True):
 
 def explain(ir):
     """把 IR 翻译成一句人话，用来确认"我理解的和你说的是不是同一件事"。"""
-    src = next((c for c in ir.components if c.family == "SIGNAL_VOLTAGE_SOURCES"), None)
+    src = next((c for c in ir.components
+                if c.family in ("SIGNAL_VOLTAGE_SOURCES", "POWER_SOURCES")
+                and c.part != "GROUND"), None)
     chain = [c for c in ir.components
              if c.family in ("RESISTOR", "CAPACITOR")]
     parts = []
     if src:
-        f = (src.params or {}).get(5)
-        parts.append("%s 是 %s V / %s Hz 正弦源"
-                     % (src.refdes, _fmt_value(src.value), _fmt_value(f)))
+        if src.part == "DC_POWER":
+            parts.append("%s 是 %s V 直流源" % (src.refdes, _fmt_value(src.value)))
+        else:
+            f = (src.params or {}).get(5)
+            parts.append("%s 是 %s V / %s Hz 正弦源"
+                         % (src.refdes, _fmt_value(src.value), _fmt_value(f)))
     for c in chain:
         unit = "Ω" if c.family == "RESISTOR" else "F"
         parts.append("%s 是 %s%s" % (c.refdes, _fmt_value(c.value), unit))
@@ -690,8 +742,11 @@ def explain(ir):
         parts.append("探针 %s"
                      % "、".join("%s@%s" % (p.refdes, p.net) for p in ir.probes))
     s = ir.simulation
-    parts.append("仿真 %s，0~%s s，采样率 %s Hz"
-                 % (s.analysis, _fmt_value(s.stop), _fmt_value(s.sample_rate)))
+    if s.analysis == "dc":
+        parts.append("仿真 dc（直流工作点，单点）")
+    else:
+        parts.append("仿真 %s，0~%s s，采样率 %s Hz"
+                     % (s.analysis, _fmt_value(s.stop), _fmt_value(s.sample_rate)))
     return "；".join(parts)
 
 

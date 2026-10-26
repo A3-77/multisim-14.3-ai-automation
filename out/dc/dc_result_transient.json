@@ -1,0 +1,17 @@
+{
+  "ms14": "out\\dc\\dc_min.ms14",
+  "mode": "transient",
+  "outputs": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "v_in": 5.0,
+  "v_gnd": 0.0,
+  "v_resistor": 5.0,
+  "r_reported_by_multisim": 1000.0,
+  "current": 0.005,
+  "current_source": "I = V_R / R（R 来自 Multisim RLCValue）",
+  "pass": true,
+  "fails": [],
+  "csv": "out\\dc\\dc_transient_waveform.csv"
+}

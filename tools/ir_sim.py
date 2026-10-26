@@ -170,6 +170,119 @@ def measure(ir, sim_result):
             "channels": chans, "in_name": n1, "out_name": n2}
 
 
+def simulate_dc(ms14_path, sample_rate=200000.0, npts=1200, verbose=True):
+    """直流工作点：DoDCOperatingPoint -> 读探针（每个探针 1 个点）。
+
+    **铁律**：读之前不要再调 EnumOutputs（probes()）。
+    实测在 run/分析之后、read 之前多枚举一次输出，会让 GetOutputData 全部
+    返回 E_FAIL（证据 out/dc/bisect_P4.json，对照组 P0~P3 均正常）。
+    """
+    kill_multisim()
+    ms = msc.Multisim()
+    circ = ms.open(ms14_path)
+    outs = list(circ.probes())          # 只在这里枚举一次
+    if verbose:
+        print("  outputs: %s" % outs)
+
+    for nm in outs:
+        try:
+            circ.request_output(nm, sample_rate, npts, method=msc.Interp.Linear)
+        except Exception as e:
+            print("  request_output(%s) 失败: %s" % (nm, e))
+
+    err = None
+    try:
+        circ._c.DoDCOperatingPoint(msc._bstr_array(outs))
+    except Exception as e:
+        err = str(e)
+        print("  DoDCOperatingPoint 失败: %s" % e)
+    time.sleep(1.0)
+
+    data = {}
+    for nm in outs:
+        try:
+            t, v = circ.read(nm)
+        except Exception as e:
+            print("  read(%s) 失败: %s" % (nm, e))
+            continue
+        if v:
+            data[nm] = (list(t), list(v))
+            if verbose:
+                print("  %-14s n=%d  min=%.6g  max=%.6g"
+                      % (nm, len(v), min(v), max(v)))
+
+    rlc = {}
+    for ref in _rlc_refs(circ):
+        try:
+            rlc[ref] = circ.rlc(ref)
+        except Exception:
+            rlc[ref] = None
+    state = str(circ.state)
+    try:
+        circ.stop()
+    except Exception:
+        pass
+    return {"outputs": outs, "data": data, "rlc": rlc, "state": state,
+            "n": npts, "stop": 0.0, "sample_rate": sample_rate, "dc_error": err}
+
+
+def measure_dc(ir, sim_result):
+    """直流电路的读数：把探针按 IR 里的网络名对齐，算电压差和电流。
+
+    电压 = Multisim 探针实测；R = Multisim RLCValue；I = V_R / R（欧姆定律，明确标注来源）。
+    """
+    src = next((c for c in ir.components
+                if c.family in ("POWER_SOURCES", "SIGNAL_VOLTAGE_SOURCES")
+                and c.part != "GROUND"), None)
+    if src is None:
+        raise RuntimeError("IR 里没有电源")
+    outs = sim_result["outputs"]
+    data = sim_result["data"]
+    if len(outs) != len(ir.probes):
+        raise RuntimeError("探针数量对不上：电路里 %d 个，IR 里 %d 个"
+                           % (len(outs), len(ir.probes)))
+    if not data:
+        raise RuntimeError("一个探针都没读到数据")
+
+    by_net = {}
+    for probe, nm in zip(ir.probes, outs):
+        if nm in data:
+            v = data[nm][1]
+            by_net[probe.net] = {"output": nm, "mean": sum(v) / len(v),
+                                 "min": min(v), "max": max(v), "n": len(v)}
+
+    r = next((c for c in ir.components if c.family == "RESISTOR"), None)
+    r_ms = None
+    if r is not None:
+        r_ms = sim_result.get("rlc", {}).get(r.refdes)
+
+    v_in = by_net.get("in", {}).get("mean")
+    v_gnd = by_net.get("0", {}).get("mean")
+    v_r = None if (v_in is None or v_gnd is None) else v_in - v_gnd
+    i_r = None
+    if v_r is not None and (r_ms or (r and r.value)):
+        i_r = v_r / (r_ms if r_ms else r.value)
+
+    return {"mode": "dc", "channels": by_net,
+            "v_in": v_in, "v_gnd": v_gnd, "v_resistor": v_r,
+            "r_reported_by_multisim": r_ms, "current": i_r,
+            "source_amp": float(src.value or 0.0),
+            "source_refdes": src.refdes}
+
+
+def theory_dc(ir):
+    """直流串联链的理论值：只有 1 个电阻时才给"电阻电压 = 源电压、I = V/R"。"""
+    src = next((c for c in ir.components
+                if c.family in ("POWER_SOURCES", "SIGNAL_VOLTAGE_SOURCES")
+                and c.part != "GROUND"), None)
+    rs = [c for c in ir.components if c.family == "RESISTOR"]
+    if src is None or len(rs) != 1:
+        return None
+    v = float(src.value or 0.0)
+    return {"kind": "dc_series_r", "v": v, "r": rs[0].value,
+            "v_resistor": v, "current": v / rs[0].value if rs[0].value else None}
+
+
 def theory(ir):
     """按 IR 里写的元件值算理论值（不是用 Multisim 报回来的值）。
 
