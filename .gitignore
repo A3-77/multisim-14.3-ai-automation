@@ -19,6 +19,13 @@ out/*
 # Circuit IR 端到端验收的数据
 !out/rc_ir_result.json
 !out/rc_ir_waveform.csv
+# 中文 → IR 端到端验收的数据（README 引用）
+!out/nl/
+!out/nl/*.result.json
+!out/nl/*.ir.json
+!out/nl/*.waveform.csv
+!out/nl/*.compile.json
+out/nl/*.ms14
 
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/

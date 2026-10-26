@@ -1,5 +1,42 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## ✅ v0.4.0（2026-10-26）：一句话生成电路
+>
+> v0.3.0 把中间层立起来了，但入口还是 JSON。v0.4.0 接上了最上面那一环：
+>
+> **中文 → Circuit IR → msbuild → `.ms14` → Multisim → COM → 拟合 → 与理论比对**
+>
+> **1. `nl2ir`：规则解析器，不是 LLM**
+>
+> 同一句话必须永远解析成同一份 IR，否则下游结果不可复现、回归测试无从谈起。
+> 46 项解析测试（`tools/test_nl2ir.py`）不需要 Multisim，毫秒级跑完。
+>
+> 数值归属用的是"连续短语"而不是"最近距离"——`电阻、1kΩ 电阻` 这种并列写法
+> 里，最近距离会对称歧义，连续短语不会。
+>
+> **2. 不猜**
+>
+> 缺频率、缺阻值、并联拓扑、白名单外元件、`把 R1 改成 2kΩ`（修改已有电路）——
+> 一律报错，并说清缺什么、该怎么改。猜错一个值，电路照样能生成、能跑仿真，
+> 但结论是错的。"看起来能跑"比"直接报错"危险得多。
+>
+> **3. 实测：中文链路与手写 API 链路逐位相同**
+>
+> | 检查项 | 结果 |
+> | --- | --- |
+> | 中文 → IR | 4 元件 / 3 网络 / 2 探针，`validate()` 无错 |
+> | 与 `examples/rc_lowpass.ir.json` | 语义**完全一致**（字段逐个相等） |
+> | Multisim 注册探针 | `['V(探针1)', 'V(探针2)']` |
+> | 增益 | **0.70632** / 理论 0.70745 |
+> | 相位 | **−45.06°** / 理论 −44.97° |
+> | 与直接 `add_part` 基线 | 增益 Δ=0.00e+00，相位 Δ=0.000° |
+>
+> 换一组元件和频率再验一次（100mV / 2kHz / 2.2kΩ / 100nF，fc=723 Hz）：
+> 增益 0.33918 / 理论 0.34015，相位 −70.17° / 理论 −70.11°。
+> 两句话都是**真跑 Multisim**，不是推算。
+>
+> ---
+>
 > ## ✅ v0.3.0（2026-10-26）：从「逆向格式」转向「做生成器」
 >
 > v0.2.0 解决了"生成的电路能不能仿真"。v0.3.0 解决的是"能不能**复用**"：
@@ -98,6 +135,7 @@
 | --- | --- |
 | [docs/ms14-format.md](docs/ms14-format.md) | **`.ms14` 文件格式完整规范**：PKWARE DCL 压缩算法 + 分块容器 + 字节级细节 |
 | [docs/circuit-xml.md](docs/circuit-xml.md) | **电路 XML 对象模型**：两棵平行树、坐标系、引脚几何公式、参数存储位置 |
+| [docs/nl2ir.md](docs/nl2ir.md) | **中文 → Circuit IR**：支持的句式、解析算法、错误哲学、边界 |
 | [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
 | [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
 | [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
@@ -124,7 +162,7 @@
    > **"不要让 AI 把'找到 API'当成果，要把'生成一个全新的、能在 Multisim 里打开的真实电路'
    > 作为唯一的核心验收标准。"**
 
-**当前进度：验收用例已完成约 85%。**
+**当前进度：验收用例全部完成（v0.4.0）。**
 
 | 验收点 | 状态 | 证据 |
 | --- | --- | --- |
@@ -133,8 +171,9 @@
 | 串联 1kΩ 电阻 | ✅ | R1，XML 四处值全同步，界面显示 `1kΩ`（见 `docs/shots/03_*.png`） |
 | 接地 | ✅ | GND 符号克隆自官方样例，正常渲染 |
 | 可被 Multisim 正常打开 | ✅ | 免提权启动 + 自动点弹窗 + 截图，见 `docs/shots/01_*.png` |
-| 电压探针 | 🟡 半完成 | GUI 路线已跑通（能放、能存）；纯代码路线结构已摸清，未实现 |
-| 可仿真 | ⬜ 未做 | 代码已就绪（COM API），未在自建电路上跑过 |
+| 电压探针 | ✅ | 纯代码生成，`LocalName` 序号唯一，`['V(探针1)','V(探针2)']` 可区分 |
+| 可仿真 | ✅ | RC 低通三点频响（100 Hz / 1 kHz / 10 kHz）增益与相位全部对上理论 |
+| 一句话生成电路 | ✅ | 中文 → IR → `.ms14` → 仿真，与直接 `add_part` 的基线逐位一致 |
 
 ---
 
@@ -323,6 +362,41 @@ if errs: raise SystemExit("\n".join(errs))
 同一引脚不能属于两条网络（别名会先归一化再判重）/ 探针目标存在 /
 仿真参数合法 / 采样点足够。
 
+### 3.6 中文 → Circuit IR：一句话生成电路（v0.4.0）
+
+```bash
+# 只解析（不需要 Multisim，任意 Python）
+python tools/nl2ir.py "1V 1kHz 正弦源，经过 1kΩ 电阻后接 159nF 电容到地，在输入和输出各放一个探针" \
+    -o out/nl/demo.ir.json
+
+# 端到端：解析 → 编译 → Multisim 瞬态 → 拟合 → 与理论比对（必须 32 位 Python）
+runtime\py32\python.exe tools/nl_run.py --file examples/nl/rc_lowpass.txt
+```
+
+`nl_run.py` 会先把"我理解成什么"打印出来，再往下走：
+
+```
+[1] 中文 -> Circuit IR
+  我理解成：V1 是 1 V / 1000 Hz 正弦源；R1 是 1000Ω；C1 是 1.59e-07F；
+           串联顺序 V1.+ → R1 → C1 → 地；网络 in = V1.+ + R1.1；网络 out = R1.2 + C1.1；
+           网络 0 = V1.- + GND1.1 + C1.2；探针 P1@in、P2@out；仿真 transient，0~0.006 s
+  · 仿真时长：未指定 → 6 个周期 = 0.006 s
+  · 采样率：未指定 → 200 × 频率 = 200000 Hz
+```
+
+实测（真跑 Multisim 14.3）：
+
+| 电路 | 增益 | 理论 \|H\| | 相位 | 理论 ∠H |
+| --- | --- | --- | --- | --- |
+| 1 V / 1 kHz / 1 kΩ / 159 nF（fc=1001 Hz） | 0.70632 | 0.70745 | −45.06° | −44.97° |
+| 100 mV / 2 kHz / 2.2 kΩ / 100 nF（fc=723 Hz） | 0.33918 | 0.34015 | −70.17° | −70.11° |
+
+第一行的增益/相位与**直接调用 `add_part` 的基线逐位相同**（Δ=0.00e+00 / Δ=0.000°）。
+
+解析层的反向用例（46 项，`tools/test_nl2ir.py`）：缺频率 / 缺阻值 / 并联 /
+电感 / 运放 / 直流源 / 交流分析 / 探针位置不明 / 修改已有电路 —— 全部在
+生成任何文件之前报错。详细语法与算法见 [docs/nl2ir.md](docs/nl2ir.md)。
+
 ---
 
 ## 四、环境依赖
@@ -365,6 +439,9 @@ PY
 # 3. 生成验收电路并让 Multisim 打开
 python tools/build_acceptance.py
 python tools/verify_open.py out/ref/acceptance.ms14 out/verify.json
+
+# 4. 一句话生成电路并仿真（32 位 Python）
+runtime\py32\python.exe tools/nl_run.py --file examples/nl/rc_lowpass.txt
 ```
 
 **先读 [docs/deadends.md](docs/deadends.md)，再读 [docs/next-steps.md](docs/next-steps.md)。**
@@ -387,7 +464,8 @@ multisim-ctrl/
 │   ├── api.md                 COM API 全表（旧路线留存）
 │   └── shots/                 关键截图（8 张，按时间顺序）
 ├── examples/
-│   └── rc_lowpass.ir.json     ★ Circuit IR 示例（RC 低通的完整描述）
+│   ├── rc_lowpass.ir.json     ★ Circuit IR 示例（RC 低通的完整描述）
+│   └── nl/*.txt               ★ 自然语言样例（一句话电路描述）
 ├── tools/
 │   ├── dcl.py                 ★ DCL 编解码 + .ms14 读写（核心，零依赖）
 │   ├── mssafe.py              ★★ XML 无损往返（属性值换行保护）——**所有读写必须走它**
@@ -396,6 +474,10 @@ multisim-ctrl/
 │   ├── circuit_ir.py          ★ Circuit IR 数据模型 + 校验（纯 JSON，无 XML 概念）
 │   ├── ir_compile.py          ★ IR → .ms14（只调用已验证 API）
 │   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
+│   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
+│   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
+│   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
+│   ├── test_nl2ir.py          ★ 解析测试：46 项正向/反向用例
 │   ├── ir_compare.py          结构比对两个 .ms14
 │   ├── fitlib.py              正弦最小二乘拟合 + 一阶低通理论值
 │   ├── build_rc_lowpass.py    ★ 用 add_part 生成 RC 低通（`--freq` 改频率）
@@ -459,12 +541,20 @@ multisim-ctrl/
 - **Circuit IR 端到端跑通**：IR → `.ms14` → 仿真 → 拟合，结果与直接调用
   `add_part` **完全一致**（增益 Δ=0、相位 Δ=0.000°）
 - **IR 校验在落盘前拦截错误**：26 个反向用例（`tools/test_ir_validate.py`）
+- **中文 → Circuit IR**：46 项解析测试（`tools/test_nl2ir.py`），
+  验收句解析结果与 `examples/rc_lowpass.ir.json` 字段逐个相等
+- **中文端到端**：1 kHz / 2 kHz 两个电路真跑 Multisim，增益与相位均对上理论，
+  1 kHz 那组与直接 `add_part` 的基线**逐位相同**（Δ=0.00e+00 / Δ=0.000°）
 
 ### ⬜ 未验证（接手后第一件事）
 
 - `RESISTOR_RATED` / `CAPACITOR_RATED`（family `RATED_VIRTUAL`）路线
 - 运放、555 等多引脚元件的通用 `add_part` 支持
 - 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
+- **直流源（`DC_POWER`）**：纯电阻回路没有动态元件，瞬态会立刻结束、
+  探针注册不上（`build_acceptance.py` 头注释记录了这条），所以原始验收句
+  "5V 直流电源串联 1kΩ 电阻接地" 还没进 IR 白名单
+- **并联 / 多支路拓扑**：布局与连线未验证
 
 ### ❓ 已知未知
 

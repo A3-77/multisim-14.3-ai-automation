@@ -1,0 +1,97 @@
+{
+  "name": "nl_V1_R1_C1_2000Hz",
+  "components": [
+    {
+      "refdes": "V1",
+      "family": "SIGNAL_VOLTAGE_SOURCES",
+      "part": "AC_VOLTAGE",
+      "value": 0.1,
+      "params": {
+        "5": 2000.0
+      },
+      "position": [
+        300.0,
+        300.0
+      ]
+    },
+    {
+      "refdes": "R1",
+      "family": "RESISTOR",
+      "part": "RESISTOR_VIRTUAL",
+      "value": 2200.0,
+      "params": {},
+      "position": [
+        500.0,
+        300.0
+      ]
+    },
+    {
+      "refdes": "C1",
+      "family": "CAPACITOR",
+      "part": "CAPACITOR_VIRTUAL",
+      "value": 1.0000000000000001e-07,
+      "params": {},
+      "position": [
+        700.0,
+        400.0
+      ]
+    },
+    {
+      "refdes": "GND1",
+      "family": "POWER_SOURCES",
+      "part": "GROUND",
+      "value": null,
+      "params": {},
+      "position": [
+        300.0,
+        420.0
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "name": "in",
+      "pins": [
+        "V1.+",
+        "R1.1"
+      ]
+    },
+    {
+      "name": "out",
+      "pins": [
+        "R1.2",
+        "C1.1"
+      ]
+    },
+    {
+      "name": "0",
+      "pins": [
+        "V1.-",
+        "GND1.1",
+        "C1.2"
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "refdes": "P1",
+      "kind": "V",
+      "net": "in",
+      "at": null
+    },
+    {
+      "refdes": "P2",
+      "kind": "V",
+      "net": "out",
+      "at": null
+    }
+  ],
+  "simulation": {
+    "analysis": "transient",
+    "start": 0.0,
+    "stop": 0.006,
+    "step": null,
+    "sample_rate": 200000.0
+  },
+  "version": 1
+}

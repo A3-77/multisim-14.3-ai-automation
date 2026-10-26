@@ -14,6 +14,10 @@
 | `circuit_ir.py` | **Circuit IR 数据模型 + 校验**（纯 JSON，不含任何 XML 概念） |
 | `ir_compile.py` | IR → `.ms14`（只调用已验证 API，落盘前先跑校验） |
 | `ir_run.py` | IR 端到端验收（编译 → 仿真 → 拟合 → 与直接 API 基线比对） |
+| `ir_sim.py` | 仿真 + 拟合内核（`nl_run` 用；`ir_run` 保持原样当基线，不被它影响） |
+| `nl2ir.py` | **中文 → Circuit IR**（规则解析器，不依赖 LLM；产出前先 `validate()`） |
+| `nl_run.py` | 中文端到端验收（一句话 → IR → `.ms14` → 仿真 → 理论比对） |
+| `test_nl2ir.py` | 解析测试：46 项正向/反向用例，不需要 Multisim |
 | `ir_compare.py` | 结构比对两个 `.ms14`（元件 / 主参数 / 网络成员 / 探针数） |
 | `fitlib.py` | 正弦最小二乘拟合 + 一阶低通理论值 |
 | `build_rc_lowpass.py` | 用 `add_part` 生成 RC 低通（`--freq` 改激励频率） |
