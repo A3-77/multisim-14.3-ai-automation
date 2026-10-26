@@ -32,6 +32,11 @@ out/nl/*.ms14
 !out/dc/*.csv
 !out/dc/*.py
 out/dc/*.ms14
+# MCP 验收结果（docs/mcp.md 直接引用）；会话目录是运行产物，可重跑生成
+!out/mcp/
+!out/mcp/*.json
+out/mcp/sessions/
+out/mcp/*.log
 
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/

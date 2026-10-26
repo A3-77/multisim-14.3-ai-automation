@@ -1,0 +1,200 @@
+{
+  "tools": [
+    {
+      "name": "create_circuit",
+      "description": "创建一个新的空电路会话，返回 circuit_id。之后所有 add_component / connect / add_probe 都要带上这个 id。不会立刻生成 .ms14 —— 编译发生在 simulate 时。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "给电路起个名字（可读，会用于产物文件名）"
+          }
+        }
+      }
+    },
+    {
+      "name": "add_component",
+      "description": "往电路里加一个元件。只接受已验证过真机仿真的五种：\n  SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE（正弦源，需要 amplitude + frequency）\n  POWER_SOURCES/DC_POWER（直流源，需要 voltage）\n  RESISTOR/RESISTOR_VIRTUAL（需要 resistance，单位 Ω）\n  CAPACITOR/CAPACITOR_VIRTUAL（需要 capacitance，单位 F）\n  POWER_SOURCES/GROUND（接地，不需要 value）\n不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "circuit_id": {
+            "type": "string",
+            "description": "create_circuit 返回的 circuit_id，形如 c-1a2b3c4d5e"
+          },
+          "family": {
+            "type": "string",
+            "description": "元件家族，如 RESISTOR / POWER_SOURCES"
+          },
+          "part": {
+            "type": "string",
+            "description": "具体型号，如 RESISTOR_VIRTUAL / DC_POWER"
+          },
+          "refdes": {
+            "type": "string",
+            "description": "位号（V1 / R1 / C1 / GND1）。不传则自动编号"
+          },
+          "value": {
+            "type": "number",
+            "description": "元件值：幅值 V / 电压 V / 阻值 Ω / 容值 F"
+          },
+          "frequency": {
+            "type": "number",
+            "description": "仅 AC_VOLTAGE 需要，单位 Hz"
+          },
+          "params": {
+            "type": "object",
+            "description": "高级用法：直接给底层参数序号。一般不要用"
+          }
+        },
+        "required": [
+          "circuit_id",
+          "family",
+          "part"
+        ]
+      }
+    },
+    {
+      "name": "connect",
+      "description": "把若干引脚连到同一条网络上。引脚写法：[\"V1\",\"+\"] 或 \"V1.+\"。\n网络名可以不给：含地的网络会自动叫 '0'，含电源正极的自动叫 'in'，其余 n1/n2。也可以给一个名字把引脚追加到已有网络。\n同一个引脚不能属于两条网络。不要传坐标。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "circuit_id": {
+            "type": "string",
+            "description": "create_circuit 返回的 circuit_id，形如 c-1a2b3c4d5e"
+          },
+          "pins": {
+            "type": "array",
+            "description": "引脚数组，如 [[\"V1\",\"+\"],[\"R1\",\"1\"]]",
+            "items": {}
+          },
+          "net": {
+            "type": "string",
+            "description": "网络名。不传则自动命名"
+          }
+        },
+        "required": [
+          "circuit_id",
+          "pins"
+        ]
+      }
+    },
+    {
+      "name": "add_probe",
+      "description": "在某个网络上放一个电压探针。target 可以是网络名（'out'）、引脚（'R1.2'，自动解析成它所在的网络）。\n不要传元件位号（'R1'）—— 两端元件有两个引脚，会报 AMBIGUOUS_TARGET。\n最多 9 个探针（LocalName 序号超过一位数字的命名规则还没验证）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "circuit_id": {
+            "type": "string",
+            "description": "create_circuit 返回的 circuit_id，形如 c-1a2b3c4d5e"
+          },
+          "target": {
+            "type": "string",
+            "description": "网络名（'in'）或引脚（'R1.2'）"
+          },
+          "name": {
+            "type": "string",
+            "description": "探针名。不传则自动编号 P1/P2/..."
+          }
+        },
+        "required": [
+          "circuit_id",
+          "target"
+        ]
+      }
+    },
+    {
+      "name": "simulate",
+      "description": "编译并真跑 Multisim，返回仿真句柄 sim_id。\nanalysis 可选 transient（时域）或 dc（直流工作点，单点）。\n源类型与分析的匹配是强制的：AC_VOLTAGE 只能 transient，DC_POWER 默认 dc（也允许 transient）。不匹配会返回 ANALYSIS_NOT_SUPPORTED 并告诉你该改成什么。\ntransient 不传 stop / sample_rate 时按信号频率自动推算（6 个周期、每周期 200 点）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "circuit_id": {
+            "type": "string",
+            "description": "create_circuit 返回的 circuit_id，形如 c-1a2b3c4d5e"
+          },
+          "analysis": {
+            "type": "string",
+            "enum": [
+              "transient",
+              "dc"
+            ],
+            "description": "分析类型。不传则按源类型自动选"
+          },
+          "start": {
+            "type": "number",
+            "description": "起始时间 s（仅 transient）"
+          },
+          "stop": {
+            "type": "number",
+            "description": "结束时间 s（仅 transient）"
+          },
+          "sample_rate": {
+            "type": "number",
+            "description": "采样率 Hz（仅 transient）"
+          }
+        },
+        "required": [
+          "circuit_id"
+        ]
+      }
+    },
+    {
+      "name": "measure",
+      "description": "从一次仿真里取测量值。what 决定返回哪些字段：\n  all（默认）      全部：均值 / RMS / 幅值 / 相位 / 增益\n  voltage          每通道的 mean / rms / min / max\n  amplitude        每通道的正弦拟合幅值（仅 transient）\n  phase            每通道相位（仅 transient）\n  dc_voltage       每通道直流电压（仅 dc）\ntransient 会额外给 gain / phase_deg / theory；dc 会给 v_resistor / current（I = V_R / R，R 来自 Multisim RLCValue）。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sim_id": {
+            "type": "string",
+            "description": "simulate 返回的 sim_id"
+          },
+          "what": {
+            "type": "string",
+            "enum": [
+              "all",
+              "voltage",
+              "amplitude",
+              "phase",
+              "dc_voltage"
+            ]
+          },
+          "probe": {
+            "type": "string",
+            "description": "只看某一个探针（探针名，如 P1）"
+          }
+        },
+        "required": [
+          "sim_id"
+        ]
+      }
+    },
+    {
+      "name": "get_waveform",
+      "description": "取波形数据。不会把整条波形塞进返回值：默认只给摘要（n / min / max / mean / 时间范围）+ 最多 max_points 个采样点的预览，完整数据在 artifact 指向的 CSV 里。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "sim_id": {
+            "type": "string",
+            "description": "simulate 返回的 sim_id"
+          },
+          "probe": {
+            "type": "string",
+            "description": "只看某个通道的输出名"
+          },
+          "max_points": {
+            "type": "integer",
+            "description": "预览采样点上限，默认 200，最大 5000"
+          }
+        },
+        "required": [
+          "sim_id"
+        ]
+      }
+    }
+  ]
+}
