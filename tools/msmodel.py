@@ -30,6 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import dcl
+import mssafe
 
 P = "{http://none}"  # 占位，本文件 XML 无命名空间
 
@@ -109,7 +110,11 @@ def _num_str(value):
 class Circuit:
     def __init__(self, xml_bytes):
         self.raw = xml_bytes
-        self.tree = ET.fromstring(xml_bytes)
+        # **必须用 mssafe.parse，不能用 ET.fromstring**
+        # CIITDiagram@SimState 里存着多行仿真状态；XML 规范要求解析时把属性值里
+        # 的换行归一化成空格，ET 照做 → 仿真配置被压平 → 电阻电流恒 0。
+        # 详见 tools/mssafe.py 文件头。
+        self.tree = mssafe.parse(xml_bytes)
         self.diagram = self.tree.find(".//CIITDiagram")
         if self.diagram is None:
             raise ValueError("找不到 CIITDiagram")
@@ -135,7 +140,8 @@ class Circuit:
         return c
 
     def save(self, path, matches=True):
-        xml = ET.tostring(self.tree, encoding="ascii", xml_declaration=True)
+        # 同理：序列化必须走 mssafe，否则属性值里的换行会永久丢失
+        xml = mssafe.serialize(self.tree)
         return dcl.write_ms14(path, xml, matches=matches)
 
     def _reseed(self):
@@ -239,11 +245,13 @@ class Circuit:
         pl = items[ATTR_PARAMS].find("CiaParamList")
 
         # 1) 数值
+        #    注意：原生 14 文件的虚拟元件（RESISTOR_VIRTUAL 等）doubles 是**空**的，
+        #    值只存在 parameters 字符串里；老样例（7812/SPICE 样例）才有 12 个 doubles。
+        #    所以这里不能硬要求 doubles[idx] 存在，否则克隆原生元件会直接崩。
         doubles = pl.find("doubles")
-        nums = doubles.findall("Item")
-        if idx >= len(nums):
-            raise IndexError("参数索引 %d 越界（只有 %d 个）" % (idx, len(nums)))
-        nums[idx].set("Value", _num_str(value))
+        nums = doubles.findall("Item") if doubles is not None else []
+        if idx < len(nums):
+            nums[idx].set("Value", _num_str(value))
 
         # 2) 人类可读
         human = human or eng(value)
@@ -286,11 +294,20 @@ class Circuit:
         return None
 
     def translate(self, ciid, dx, dy):
-        """平移元件的所有绘图子对象。"""
+        """平移元件的所有绘图子对象。
+
+        **不能无脑遍历所有 Transformer**：`CIITPinConnectorComp` 是引脚符号里的
+        局部连接点，官方样例（317/325 个）里它的变换矩阵恒为恒等 (0,0)，表达的是
+        「相对引脚符号原点」的偏移。把它一起平移，引脚画在正确位置、CiNode/Ports
+        拓扑也完全正确（ReportNetlist 看不出问题），但电气连接点会整体偏移，
+        SPICE 侧该元件引脚悬空 → 整条元件被丢弃 → 表现为「电阻开路、电流为零」。
+        """
         item = self.symbol_of(ciid)
         if item is None:
             return False
         for el in item.iter():
+            if el.tag == "CIITPinConnectorComp":
+                continue
             x, y = el.get("Transformer-M20"), el.get("Transformer-M21")
             if x is not None and y is not None:
                 el.set("Transformer-M20", "%g." % (_flt(x) + dx))
@@ -394,13 +411,13 @@ class Circuit:
             conn = pin.find(".//CIITPinConnectorComp")
             if conn is None:
                 continue
-            lx, ly = float(conn.get("ptCenterX")), float(conn.get("ptCenterY"))
-            m00 = float(pin.get("Transformer-M00"))
-            m01 = float(pin.get("Transformer-M01"))
-            m10 = float(pin.get("Transformer-M10"))
-            m11 = float(pin.get("Transformer-M11"))
-            tx = float(pin.get("Transformer-M20"))
-            ty = float(pin.get("Transformer-M21"))
+            lx, ly = _flt(conn.get("ptCenterX")), _flt(conn.get("ptCenterY"))
+            m00 = _flt(pin.get("Transformer-M00"))
+            m01 = _flt(pin.get("Transformer-M01"))
+            m10 = _flt(pin.get("Transformer-M10"))
+            m11 = _flt(pin.get("Transformer-M11"))
+            tx = _flt(pin.get("Transformer-M20"))
+            ty = _flt(pin.get("Transformer-M21"))
             x = m00 * lx + m10 * ly + tx
             y = m01 * lx + m11 * ly + ty
             name = _txt(pin.get("PinName")).replace("&ASC", "")

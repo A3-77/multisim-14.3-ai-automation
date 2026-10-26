@@ -123,6 +123,71 @@ def clone_probe_ext(a, donor_path, x, y):
     return new_elec_id, new_draw_id
 
 
+def build_divider(args):
+    """更强的验收：V1(5V) - R1(1k) - 中点 - R2(1k) - GND，探针在中点。
+
+    为什么需要这个：上面的 acceptance.ms14 探针落在 net1（电源网），读出 5.0V
+    只能证明电源在，**证明不了电阻导通**。中点读 2.5V 才是电阻真的在导通的证据。
+
+    中点有 3 个引脚汇聚（R1.2 / R2.1 / C1.1），所以这里顺带验证了「T 型交汇
+    不需要额外 junction 对象」——实测 2.5V。
+    """
+    donor = msmodel.Circuit(gzip.open(DONOR, "rb").read())
+    a = msbuild.Assembler()
+
+    v1, _ = a.add(msbuild.Donor(donor, "V2"), x=300.0, y=300.0, refdes="V1")
+    a.c.set_value_by_refdes("V1", 5.0)
+    r1, _ = a.add(msbuild.Donor(donor, "R1"), x=500.0, y=340.0, refdes="R1")
+    a.c.set_value_by_refdes("R1", 1000.0)
+    r2, _ = a.add(msbuild.Donor(donor, "R1"), x=650.0, y=430.0, refdes="R2")
+    a.c.set_value_by_refdes("R2", 1000.0)
+    c1, _ = a.add(msbuild.Donor(donor, "C1"), x=790.0, y=430.0, refdes="C1")
+    a.c.set_value_by_refdes("C1", args.cap)
+
+    gnds = [c for c in donor.components() if c["part"] == "GROUND"]
+    donor.set_refdes(gnds[0]["ciid"], "GNDA")
+    donor.set_refdes(gnds[3]["ciid"], "GNDC")
+
+    n1 = a.connect([(v1, "1"), (r1, "1")], name="1")
+    n2 = a.connect([(r1, "2"), (r2, "1"), (c1, "1")], name="2")
+    a.connect([(v1, "2"), (a.add(msbuild.Donor(donor, "GNDA"), x=300.0, y=470.0)[0], "1")],
+              name="0")
+    a.connect([(r2, "2"), (a.add(msbuild.Donor(donor, "GNDC"), x=650.0, y=540.0)[0], "1")],
+              name="0")
+    a.connect([(c1, "2"), (a.add(msbuild.Donor(donor, "GNDC"), x=790.0, y=540.0)[0], "1")],
+              name="0")
+    print("节点: net1=%s 中点=%s" % (n1, n2))
+
+    # 探针落在中点导线的中间顶点
+    vx = None
+    for e in a.objs:
+        inner = list(e)
+        if inner and inner[0].get("Class") == "CIITLinkComp" and inner[0].get("Node") == n2:
+            pts = [(float(p.get("X")), float(p.get("Y"))) for p in inner[0].find("Points")]
+            vx = pts[1] if len(pts) >= 3 else pts[0]
+            print("中点导线 pts=%s 探针落点=%s" % (pts, vx))
+            break
+    if vx is None:
+        raise SystemExit("找不到中点导线")
+    clone_probe_ext(a, PROBE_DONOR, vx[0], vx[1])
+
+    out = os.path.join(ROOT, "out", "ref", "acceptance_divider.ms14")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    n, _ = a.save(out)
+    print("写出 %s (%d 字节)" % (out, n))
+    back = msmodel.Circuit.load(out)
+    pm = {p["ciid"]: p for p in back.ports()}
+    for nd in back.nodes():
+        names = []
+        for pid in nd["ports"]:
+            p = pm.get(pid)
+            if p:
+                ref = next((x["refdes"] for x in back.components()
+                            if x["ciid"] == p["component"]), "?")
+                names.append("%s.%s" % (ref, p["name"]))
+        print("  node %-10s ports=%s" % (nd["ciid"], names))
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -130,7 +195,13 @@ def main():
                     help="C1 容值（法拉），默认 1e-12（1pF）")
     ap.add_argument("--no-probe", action="store_true",
                     help="只搭电路不放探针（调试用）")
+    ap.add_argument("--divider", action="store_true",
+                    help="改搭分压器版本（中点应读 2.5V），产物 acceptance_divider.ms14")
     args = ap.parse_args()
+
+    if args.divider:
+        build_divider(args)
+        return
 
     donor = msmodel.Circuit(gzip.open(DONOR, "rb").read())
     a = msbuild.Assembler()

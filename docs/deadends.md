@@ -252,3 +252,83 @@ C:\Users\Public\Documents\National Instruments\Circuit Design Suite 14.3\samples
 | `drv.py` `edo.py` `do.py` `open_one.py` `gen_*.py` `inspect_probe*.py` | 杂项 | ★ |
 
 **接手时只需要看标注 ★★★ 的四个文件 + 文档，其余按需查。**
+
+---
+
+## 六、⚠️ 头号坑：XML 属性值里的换行（2026-10-26 定论）
+
+**这条坑吃掉了整个 v0.1.0 之后的两天。先读这一节。**
+
+### 症状
+
+自建电路在 Multisim 里能打开、元件和导线都显示正常、`ReportNetlist` 的网表
+**完全正确**（R1 就在 node1–node2 之间）、`RLCValue('R1')` 也读得到 1000Ω，
+但仿真时：
+
+- 电源电压正常（探针在源网读到 5.0 V）
+- **任何无源元件所在的节点恒为 0 V**
+- 部分输出 `GetOutputData` 报「未指定的错误」
+- 看起来就像「克隆出来的电阻是开路的」
+
+### 真相
+
+`CIITDiagram@SimState` 属性里存着**多行**仿真状态文本：
+
+```
+SimState="&ASCSIMULATION_INFO:list{ANALYSES:list{
+ANALYSIS_LIST:list{}
+ANALYSIS:list{
+...
+}}}"
+```
+
+XML 1.0 规范 3.3.3 规定属性值里的字面换行必须归一化成空格。
+`xml.etree.ElementTree` 严格照做 → 这段数据被压平 → Multisim 读不回仿真配置。
+
+**跟克隆无关。任何经过 `ET.fromstring` + `ET.tostring` 往返的文件都会坏，
+包括原生文件本身。**
+
+### 一分钟自检
+
+```python
+import sys; sys.path.insert(0, "tools")
+import dcl, xml.etree.ElementTree as ET
+raw, _ = dcl.read_ms14("corpus/samples14/buck.ms14")
+print(raw.count(b"\n"))                                                  # 19870
+print(ET.tostring(ET.fromstring(raw), encoding="ascii").count(b"\n"))    # 11293 ← 少了 8577
+```
+
+换行数掉下来就是中招了。
+
+### 正确写法
+
+```python
+import mssafe
+tree = mssafe.parse(raw)        # 读
+xml  = mssafe.serialize(tree)   # 写
+```
+
+`msmodel.Circuit` 已经全部改走 `mssafe`。**不要在任何新代码里直接用
+`ET.fromstring` / `ET.tostring` 处理 `.ms14` 内容。**
+
+回归测试：`runtime\py32\python.exe tools\test_mssafe.py`（4 个样本逐字节一致）。
+
+### 连带作废的假设
+
+因为症状指向「元件没进网表」，很容易一路去查结构缺失。这些都试过了，**全错**：
+
+`NodeText`/`CODNodeTextComp` 网络分组、`CODPinComp` 交汇结点（junction）、
+`CSCH_CAPVirtualComponentPin@lastnet`、`CIITPinSymbolComp@PortID` 重复、
+虚拟元件缺 `Model`、`doubles` 布局、供体文件损坏、探针绑错网络。
+
+其中两个可以彻底忘掉：
+
+- **3 引脚以上的网络不需要任何 junction 对象**。实测 3 引脚中点分压器读出 2.5 V。
+- **探针绑定是准确的**。造一个「被探针测的节点由独立 3 V 源硬定」的电路，读到的就是 3 V。
+
+### 教训
+
+「电压对、电流为零」这种症状，第一反应应该是**怀疑测量/读写链路**，
+而不是元件模型。先用原生文件做一次「只过一遍读写路径」的对照——
+本项目就是这么找到的（`out/p18_R_repack.ms14` vs `out/p18_S_etround.ms14`）。
+

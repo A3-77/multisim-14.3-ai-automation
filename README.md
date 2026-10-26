@@ -1,33 +1,52 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
-> ## ✅ v0.1.0-p0-pass（2026-10-24）：P0 验收通过
+> ## ✅ v0.2.0（2026-10-26）：找到并修掉真正的根因
 >
-> **从空白 Multisim 14.3 电路出发，引擎用纯代码生成 V1(5V) + R1(1kΩ) + C1(1pF) + GND + 电压探针，
-> Multisim 能正常打开并真实仿真；COM 读到 `V(探针1)` 的 100 个采样点，恒为 `5.0 V`，
-> `RLCValue('R1') = 1000.0 Ω` → I = 5 mA。**
+> **根因：`CIITDiagram@SimState` 属性里存着多行仿真状态文本，XML 规范要求
+> 解析时把属性值里的换行归一化成空格，`xml.etree.ElementTree` 照做 →
+> 仿真配置被压平 → Multisim 读不回分析设置 → 只剩电源在动，R/C 全部开路。**
+>
+> 表现就是长期被误判成「克隆的电阻是开路的」的那个现象：电源电压还在、
+> 电阻电流恒 0、部分输出读不出来。
+>
+> 三行证据（同一份原生文件，逻辑零改动）：
+>
+> | 版本 | V(PR1) | I(PR1) | 可读输出 |
+> | --- | --- | --- | --- |
+> | 原生 | 84 V | **13.9977 A** | 8/8 |
+> | 只重打包容器（XML 字节不动） | 84 V | **13.9977 A** | 8/8 |
+> | 仅 ET 解析 + 序列化 | 84 V | **0 A** | 3/8 |
+>
+> 修复：新增 `tools/mssafe.py`，解析前把属性值内部的 `\r\n\t` 换成 ASCII
+> 占位符，序列化后还原；`msmodel.Circuit` 的读写全部改走它。
+> 回归测试 `tools/test_mssafe.py`：4 个原生样本往返**逐字节一致**。
+>
+> ### 验收结果（全部实测，非推断）
+>
+> | 用例 | 期望 | 实测 | 结论 |
+> | --- | --- | --- | --- |
+> | `out/ref/acceptance.ms14`（探针在源网） | 5.0 V 恒定 | **5.0 V**，极差 1.8e-15，2000 点 | ✅ |
+> | `out/ref/acceptance_divider.ms14`（探针在分压中点） | 2.5 V 恒定 | **2.5 V**，极差 1.3e-15，2000 点 | ✅ |
+> | `RLCValue('R1')` | 1000 Ω | **1000.0 Ω** | ✅ |
+>
+> **分压器中点读到 2.5 V，是电阻真的在导通的直接证据**——这正是 v0.1.0 里
+> 缺的那一环。探针在源网只证明电源在，中点 2.5 V 才证明 R1/R2 进了 SPICE 网表。
+>
+> 同时被证伪的几个假设（详见 `docs/deadends.md`）：
+> `CIITLinkComp@NodeText` / `CODNodeTextComp` 网络分组、`CODPinComp` 交汇结点
+> （junction）、`CSCH_CAPVirtualComponentPin@lastnet`、`CIITPinSymbolComp@PortID`
+> 重复、虚拟元件缺 `Model` 属性、`doubles` 与 `parameters` 布局、供体文件损坏。
+> **这些都不是原因。** 3 引脚中点不需要任何结点对象，实测 2.5 V。
 >
 > 验证记录：[`docs/p0-acceptance.md`](docs/p0-acceptance.md) ·
-> 电路：[`out/ref/acceptance.ms14`](out/ref/acceptance.ms14) ·
-> 波形：[`out/ref/p0_waveform.csv`](out/ref/p0_waveform.csv) ·
-> JSON：[`out/ref/p11_final.json`](out/ref/p11_final.json)
->
-> 关键修复：`msbuild.Assembler.add()` 克隆元件时漏了 `CIITPinSymbolComp@PortID` 重映射，
-> 导致引脚符号与电气端口脱钩——元件/参数/导线全对，但仿真秒停。修复后整条链路才真正打通。
->
-> ### ⚠️ 2026-10-24 20:50 复核修正（重要）
->
-> 后续分压器实验（A1–A4）证明：**克隆出来的 `RESISTOR_VIRTUAL` 在仿真中等效开路**。
-> 依据：去掉 R2 后中点仍为 0V（应 5V），而不放电阻、导线直连时探针读到 5V。
->
-> 因此 **P0 的 `I = 5mA` 结论不成立**——当时探针落在源正极节点，只验证了 5V 源电压，
-> 电流从未被测量。仍然成立的是：从空白 `.ms14` 生成电路、Multisim 能打开、探针能注册并读到数、
-> 元件参数可读写。根因（克隆电阻为何不进 SPICE 元素表）仍在定位中，详见 `docs/p0-acceptance.md`。
+> JSON：[`out/p0_validation.json`](out/p0_validation.json) ·
+> 波形：[`out/p0_waveform_source.csv`](out/p0_waveform_source.csv)、
+> [`out/p0_waveform_divider.csv`](out/p0_waveform_divider.csv)
 >
 > ---
 >
-> **一句话结论（更新）：已经能做到"从空白电路开始，用代码生成一个能被 Multisim 打开、
-> 并且能真实仿真、能通过 COM 读到正确读数的电路文件（`.ms14`）"。**
-> 下一步是工程化与泛化：统一元件 API → RC 低通 → 元件覆盖率 → Circuit IR → 自然语言。
+> **一句话结论：从空白电路用代码生成 `.ms14`，Multisim 能打开、能真实仿真、
+> COM 能读到正确读数——含分压器这种需要多个无源元件真正导通才能成立的拓扑。**
 
 本仓库是完整的过程记录 + 可运行代码 + ground truth 语料库，供后续 agent 接手继续研究。
 
@@ -224,26 +243,32 @@ multisim-ctrl/
 │   └── shots/                 关键截图（8 张，按时间顺序）
 ├── tools/
 │   ├── dcl.py                 ★ DCL 编解码 + .ms14 读写（核心，零依赖）
+│   ├── mssafe.py              ★★ XML 无损往返（属性值换行保护）——**所有读写必须走它**
 │   ├── msmodel.py             ★ 电路对象模型层
 │   ├── msbuild.py             ★ 装配器（克隆元件 + 连线）
-│   ├── build_acceptance.py    ★ 验收电路生成脚本
+│   ├── build_acceptance.py    ★ 验收电路生成脚本（`--divider` 出分压器版本）
+│   ├── validate_acceptance.py ★ 验收仿真（读回电压 + 判定）
+│   ├── test_mssafe.py         ★ 回归测试：XML 往返必须逐字节一致
+│   ├── p18_run2.py            稳健的瞬态读取（**必须在 stop() 之前读**）
 │   ├── index_samples.py       样例索引生成
 │   ├── verify_open.py         启动 Multisim + 点弹窗 + 截图
 │   ├── msui.py                GUI 高层封装（launch/click_img/shot）
 │   ├── guiauto.py             Win32 GUI 原语（click/hotkey/foreground/screenshot）
+│   ├── INDEX.md               ★ 160 个 p*_*.py 调查脚本的分阶段索引
 │   └── ...                    其余为探索期一次性脚本，保留备查
 ├── vendor/
 │   ├── blast.c / blast.h      Mark Adler 公版 PKWARE DCL 解压器（ground truth）
 │   └── dcltool.c              C 版命令行编解码工具
 ├── corpus/
 │   ├── samples/*.xml.gz       108 个官方样例解压后的明文 XML（gzip，共 7.4 MB）
+│   ├── samples14/*.ms14       ★ 10 个原生 Multisim 14.3 电路（含 555 / 运放 / buck）
 │   └── samples_index.json     每个样例的元件清单 (refdes, family, part)
 ├── out/ref/
 │   ├── blank_circuit.xml      空白电路明文（148367 B，注入基底）
 │   ├── own_blank.ms14         用自研压缩器重打包的空白电路（Multisim 能打开）
-│   ├── acceptance.ms14        验收电路（V1 5V + R1 1kΩ + GND + 3 导线）
+│   ├── acceptance.ms14        验收电路（V1 5V + R1 1kΩ + C1 + GND，探针在源网）
+│   ├── acceptance_divider.ms14 验收电路（分压器，探针在中点，应读 2.5V）
 │   ├── with_probes.ms14       Multisim 保存的、带探针的版本
-│   ├── with_probes.xml.gz     上面那个解压后的明文
 │   └── probe_ext_full.xml     探针对象完整 XML（最重要的参考样本）
 ├── msc.py / cli.py / demo.py   COM API 路线（阶段一产物）
 ├── samples/                   原始 .ms12 示例电路
@@ -258,18 +283,23 @@ multisim-ctrl/
 
 - `.ms14` = PKWARE DCL (implode)，用 `blast.c` 交叉验证，解出长度与头部字段分毫不差
 - 纯 Python 编解码往返一致
+- **XML 无损往返**：`mssafe` 让 4 个原生样本往返后**逐字节一致**（`tools/test_mssafe.py`）
 - 自研压缩器产出的 `.ms14` 能被 Multisim 正常打开（`own_blank.ms14`）
 - 元件克隆（电气 + 绘图 + 引脚定义 + 模型）能正确渲染
 - 导线生成（`CIITLinkComp`）能正确渲染
 - 元件值四处同步修改后，界面显示正确更新（50Ω → 1kΩ）
 - 免提权启动 Multisim、自动点掉 3 个数据库弹窗
 - GUI 菜单导航放电压探针、保存后文件里确实出现探针对象
+- **从空白电路生成分压器，中点实测 2.5 V**（证明 R1/R2 真的进了 SPICE 网表并导通）
+- **从空白电路生成 V-R-C-GND 串联链，中点实测 5 V**（证明电容在直流下开路、电阻无压降）
+- 原生 555 电路、运放电路经本仓库读写后，8 个输出读数与原文件完全一致
 
 ### ⬜ 未验证（接手后第一件事）
 
-- 在自建电路上跑仿真，确认 R1 电流 = 5 mA（证明 1kΩ 真的生效，而不只是显示对）
-- 探针能否纯代码生成（结构已摸清，未实现）
-- 探针放到导线上之后仿真能否读出 5V
+- 探针能否纯代码生成（结构已摸清，已实现 `clone_probe_ext`，但只覆盖新式 ProbeExt）
+- 多探针同文件（两个 ProbeExt 会拿到**同名**输出 `V(探针2)`，COM 读取报错——
+  需要给探针显式命名，或一个文件一个探针）
+- 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
 
 ### ❓ 已知未知
 
@@ -290,12 +320,33 @@ multisim-ctrl/
 
 本项目为私人研究用途，代码可自由使用。
 
-## 2026-10-24 20:50 复核修正
+## 2026-10-26 根因定论（取代 2026-10-24 的「克隆电阻开路」判断）
 
-A1-A4 实验（见 out/p13_diag.json）证明：克隆的 RESISTOR_VIRTUAL 在仿真中等效开路。
+v0.1.0 里那句「克隆的 `RESISTOR_VIRTUAL` 在仿真中等效开路」是**症状描述，不是根因**。
 
-- A3（去掉 R2，中点只经 R1 接 5V）→ 中点 0V（应 5V）
-- A4（不放电阻，导线直连）→ 中点 5V（探针正常）
+真实根因：`CIITDiagram@SimState` 属性里是一段**多行**序列化文本
 
-因此 **I = 5mA 不成立**：P0 的探针在源正极节点，只验证了 5V 源电压。
-仍成立：空白生成、打开、探针注册、读数、参数读写。根因定位中（缺 SPICE deck）。
+```
+SimState="&ASCSIMULATION_INFO:list{ANALYSES:list{
+ANALYSIS_LIST:list{}
+ANALYSIS:list{
+...
+}}}"
+```
+
+XML 1.0 规范 3.3.3 规定属性值里的字面换行必须归一化成空格，`ElementTree`
+严格遵守 → 这块数据被压平成一行 → Multisim 自己的解析器读不回来 → 仿真配置丢失。
+
+所以不是「电阻克隆坏了」，而是**任何经过 ET 往返的文件都会坏**——包括原生文件。
+分离实验（`out/p18_R_repack.ms14` vs `out/p18_S_etround.ms14`）：
+
+| 版本 | 处理 | I(PR1) | 可读输出 |
+| --- | --- | --- | --- |
+| 原生 | — | 13.9977 A | 8/8 |
+| R | 只重打包容器，XML 字节不动 | 13.9977 A | 8/8 |
+| S | 仅 ET 解析+序列化 | 0 A | 3/8 |
+
+修复后同一个分压器：中点 **2.5 V**（期望 2.5），极差 1.3e-15。
+
+**教训：凡是要动 `.ms14` 的代码，XML 读写必须走 `mssafe`，不能用裸 `ET.fromstring`
+/ `ET.tostring`。** 回归测试 `tools/test_mssafe.py` 守住这条。

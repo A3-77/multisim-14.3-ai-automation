@@ -1,0 +1,15 @@
+{
+  "src": "corpus/samples14/Amplificador para resistencia de 1mOhm.ms14",
+  "outputs": [
+    "V(PR1)",
+    "V(PR2)",
+    "V(PR4)",
+    "V(PR5)",
+    "V(PR6)",
+    "I(PR1)",
+    "I(PR2)",
+    "P(PR3)"
+  ],
+  "stats": {},
+  "state": "0"
+}

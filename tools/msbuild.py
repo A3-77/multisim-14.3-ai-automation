@@ -14,6 +14,7 @@
 import copy
 import json
 import os
+import re
 import sys
 import uuid
 import xml.etree.ElementTree as ET
@@ -81,6 +82,21 @@ def find_part(family, part=None):
     return None
 
 
+def suggest_part(family, part=None, n=5):
+    """找不到时给候选：先列同 family 的所有 part，再给名字最像的几个。"""
+    import difflib
+    idx = part_index()
+    keys = ["%s/%s" % k for k in idx]
+    want = "%s/%s" % (family or "", part or "")
+    same = [k for k in keys if k.split("/")[0].upper() == (family or "").upper()]
+    close = difflib.get_close_matches(want, keys, n=n, cutoff=0.5)
+    out = []
+    for k in (close + same[:n]):
+        if k not in out:
+            out.append(k)
+    return out[:n]
+
+
 def load_donor(path):
     """加载并缓存 donor 电路（.ms14 压缩包或明文 XML 都行，也可直接传 Circuit）。"""
     if isinstance(path, msmodel.Circuit):
@@ -97,6 +113,155 @@ def load_donor(path):
 
 def _fresh_guid():
     return "{%s}" % str(uuid.uuid4()).upper()
+
+
+# ---------------------------------------------------------------- RefDes 注册
+# Multisim 除了把位号存在 CiComponent@LocalName，还在工程扩展里维护一份
+# 「层级位号管理器」（Project/Extensions/.../CMultisimExtension/RefDesMgrs）：
+#
+#   RefDesMgr/RefDesInfoContainers/RefDesInfoContainer/CIRToInfoMap
+#       CIRToInfoMapItem CIRKey="&ASCR1"
+#           RefDesInfo IRPrefix="&ASCR" IRNumber="1"
+#               RefDesInfoData RefDes="&ASC!0!0!0R1!0<文件全路径>!01!0<图纸名>!0"
+#   RefDesMgr/RefDesPrefixUsageMap
+#       RefDesPrefixUsage RefDes="&ASCR" Prefix="&ASCR" NextNumber="1"
+#
+# 生成网表时 %p（位号）就是从这里解析的。克隆出来的元件如果没有登记，
+# 连通性（CiNode/CiPort）看着完全正确、ReportNetlist 也对，但 SPICE 侧
+# 解析不出位号，元素被整条丢弃 —— 表现为「电阻开路、电流为零」。
+
+_PREFIX_RE = re.compile(r"^([A-Za-z_]+)(\d+)$")
+
+# 总开关：置 False 可复现「不登记 RefDes」的旧行为（用于 A/B 对照）
+REGISTER_REFDES = True
+
+
+def refdes_extension(circuit):
+    """取 CMultisimExtension 节点（RefDes 管理器的挂载点）。"""
+    for e in circuit.tree.iter("Extension"):
+        if e.get("Class") == "CMultisimExtension":
+            return e
+    return None
+
+
+def _refdes_container(circuit, create=False):
+    ext = refdes_extension(circuit)
+    if ext is None:
+        return None
+    mgrs = ext.find("RefDesMgrs")
+    if mgrs is None:
+        if not create:
+            return None
+        mgrs = ET.SubElement(ext, "RefDesMgrs")
+    mgr = mgrs.find("RefDesMgr")
+    if mgr is None:
+        if not create:
+            return None
+        mgr = ET.SubElement(mgrs, "RefDesMgr")
+        mgr.set("Class", "CIITHierRefDesManager")
+    conts = mgr.find("RefDesInfoContainers")
+    if conts is None:
+        if not create:
+            return None
+        conts = ET.SubElement(mgr, "RefDesInfoContainers")
+    cont = conts.find("RefDesInfoContainer")
+    if cont is None:
+        if not create:
+            return None
+        cont = ET.SubElement(conts, "RefDesInfoContainer")
+        cont.set("Class", "CIITHierRefDesInfoContainer")
+        cont.set("CIR", "&ASC#1/:")
+        for k, v in (("UsePreOffset", "0"), ("Prefix", ""), ("Offset", "0"),
+                     ("UsePreOffsetParent", "0"), ("PrefixParent", ""),
+                     ("OffsetParent", "0")):
+            cont.set(k, v)
+    return cont
+
+
+def donor_refdes_info(donor_circuit, refdes):
+    """从 donor 里取同位号的 RefDesInfo 作为模板（没有就返回 None）。"""
+    cont = _refdes_container(donor_circuit)
+    if cont is None:
+        return None
+    m = cont.find("CIRToInfoMap")
+    if m is None:
+        return None
+    for it in m.findall("CIRToInfoMapItem"):
+        if (it.get("CIRKey") or "").replace("&ASC", "") == refdes:
+            return it.find("RefDesInfo")
+    return None
+
+
+def _sheet_name(container):
+    """从 CIR="&ASC#1/blank:" 里抠出图纸名。"""
+    cir = container.get("CIR") or ""
+    if "/" in cir:
+        tail = cir.split("/", 1)[1]
+        return tail.rstrip(":")
+    return ""
+
+
+def build_refdes_info(refdes, template=None, donor_refdes=None,
+                      path="", sheet=""):
+    """造一个 CIITHierRefDesInfo 节点（可直接插进 CIRToInfoMapItem）。"""
+    m = _PREFIX_RE.match(refdes or "")
+    if m is None:
+        return None                      # 例如 GROUND 的位号 "0"，不登记
+    prefix, number = m.group(1), m.group(2)
+
+    if template is not None:
+        ri = copy.deepcopy(template)
+        old = (ri.get("IRPrefix") or "").replace("&ASC", "")
+        if old and old != prefix:
+            # 模板前缀不同（例如拿 R 的模板去登记 C），改掉
+            pass
+        ri.set("IRPrefix", "&ASC" + prefix)
+        ri.set("IRNumber", number)
+        ri.set("Locked", "0")
+        if ri.get("IRSection") is None:
+            ri.set("IRSection", "")
+        if ri.get("IRSectionID") is None:
+            ri.set("IRSectionID", "0")
+        if ri.get("SpiceTemplate") is None:
+            ri.set("SpiceTemplate", "")
+        data = ri.find("RefDesInfoData")
+        if data is not None:
+            rd = data.get("RefDes") or ""
+            tpl_ref = donor_refdes or ""
+            if tpl_ref and tpl_ref != refdes:
+                rd = rd.replace("!0!0!0%s!0" % tpl_ref, "!0!0!0%s!0" % refdes)
+            elif not tpl_ref:
+                rd = rd.replace("!0!0!0%s!0" % old, "!0!0!0%s!0" % refdes) \
+                    if old else rd
+            data.set("RefDes", rd)
+            data.set("Prefix", "&ASC" + prefix)
+            data.set("Number", number)
+        return ri
+
+    # 没有模板：按官方样例的写法从头造
+    ri = ET.Element("RefDesInfo")
+    ri.set("Class", "CIITHierRefDesInfo")
+    ri.set("IRPrefix", "&ASC" + prefix)
+    ri.set("IRNumber", number)
+    for k, v in (("Locked", "0"), ("IRSection", ""), ("IRSectionID", "0"),
+                 ("SpiceTemplate", "")):
+        ri.set(k, v)
+    data = ET.SubElement(ri, "RefDesInfoData")
+    data.set("Class", "CIITHierRefDes")
+    data.set("RefDesBufSize", "260")
+    data.set("RefDesStrSize", "134")
+    data.set("RefDesCount", "2")
+    data.set("RefDes", "&ASC!0!0!0%s!0%s!01!0%s!0" % (refdes, path, sheet))
+    data.set("SectionBufSize", "0")
+    data.set("SectionStrSize", "0")
+    data.set("Section", "&ASC(null)")
+    data.set("Prefix", "&ASC" + prefix)
+    data.set("Number", number)
+    ET.SubElement(data, "RefDesData")
+    for tag in ("PinOrderCIR", "PinOrderIR", "PinNumbersCIR", "PinNumbersIR",
+                "SharedPins"):
+        ET.SubElement(ri, tag)
+    return ri
 
 
 def node_attributes():
@@ -152,10 +317,18 @@ def node_attributes():
 
 
 def _f(v, default=0.0):
+    """宽容浮点解析：官方样例里坐标有 "455." 也有 "455.369."（双尾点）。
+
+    直接用 float() 会在双尾点上抛异常，被当成 default=0 —— 那会把元件坐标
+    静默写成 0，比抛错更难查，所以这里必须兜住。
+    """
     try:
         return float(v)
     except (TypeError, ValueError):
-        return default
+        try:
+            return float(str(v).strip().rstrip("."))
+        except (TypeError, ValueError):
+            return default
 
 
 class Donor:
@@ -205,6 +378,10 @@ class Assembler:
         self.circuit_item = self.c.circuit_item
         self.circuit_inner = self.circuit_item.find("CiCircuit")
         self.circuit_ciid = self.circuit_item.get("CiID")
+        self.refdes_path = ""            # RefDes 串里记的文件全路径（save 时补全）
+        self.refdes_registered = []
+        self.node_texts = {}             # CiNode CiID -> CODNodeTextComp ID
+        self.node_text_links = {}        # CiNode CiID -> <Links> 元素
 
     # ---------- 克隆元件 ----------
     def add(self, donor, x=None, y=None, refdes=None, params=None):
@@ -276,6 +453,11 @@ class Assembler:
                 if pname in port_name_to_id:
                     el.set("PortID", port_name_to_id[pname])
             for el in sym.iter():
+                # CIITPinConnectorComp 的 Transformer 在官方样例里恒为 (0,0)；
+                # 它代表电气连接点，跟着元件平移会让连接点偏离本体 200+ 单位，
+                # 元件在 SPICE 里就悬空了（连通性表却仍然正确）。必须跳过。
+                if el.tag == "CIITPinConnectorComp":
+                    continue
                 px, py = el.get("Transformer-M20"), el.get("Transformer-M21")
                 if px is not None and py is not None:
                     el.set("Transformer-M20", "%g." % (_f(px) + dx))
@@ -289,6 +471,7 @@ class Assembler:
                         if it.get("ID"):
                             refs.append(it)
             pin_map = {}
+            copied_defs = []
             for it in refs:
                 old = it.get("ID")
                 if old not in pin_map:
@@ -302,8 +485,60 @@ class Assembler:
                     di.set("CenterX", "%g" % (_f(di.get("CenterX")) + dx))
                     di.set("CenterY", "%g" % (_f(di.get("CenterY")) + dy))
                     self.refcomp.append(new_def)
+                    copied_defs.append(new_def)
                     pin_map[old] = nid
                 it.set("ID", pin_map[old])
+
+            # **关键（P17 修复）**：符号的子对象（本体图元、引脚符号、引脚连接点、
+            # 名称/数值文字）深拷贝后仍然带着 donor 的旧 ID。从同一个 donor 克隆两次
+            # （比如 R1、R2）时，两个元件会共用同一批子对象 ID；Multisim 的对象表按
+            # ID 索引，后写覆盖先写 —— 第一个元件在画布上直接不显示，电气上也等于
+            # 不存在。这正是「克隆电阻开路、连通性表却正确」的根因。
+            # 注意：ConnectList 里的 Item 是引脚定义引用，已由上面的 pin_map 处理，
+            # 不能再改，否则会和新建的 CODPinComp 定义脱钩。
+            protected = set()
+            for cl in sym.iter("ConnectList"):
+                for it in cl.findall("Item"):
+                    protected.add(it)
+            id_map = {}
+            for el in sym.iter("Item"):
+                if el is sym or el in protected:
+                    continue
+                old = el.get("ID")
+                if old and old not in id_map:
+                    id_map[old] = self.new_id()
+            for el in sym.iter("Item"):
+                if el is sym or el in protected:
+                    continue
+                old = el.get("ID")
+                if old in id_map:
+                    el.set("ID", id_map[old])
+
+            # **关键（P18 修复）**：引脚定义本体里的 ConnectList 指向「符号内部的
+            # CIITPinConnectorComp」——那个对象刚刚被重新分配了 ID，引脚定义必须
+            # 同步改写。否则引脚定义 → 连接器这条链断掉：
+            #   连通性表（走 CiNode/Ports）仍然完全正确，
+            #   但 SPICE 端子解析（走 引脚定义→连接器→导线）失败，
+            #   元件在仿真里等效开路 —— 正是「电阻开路、网表却正确」的根因。
+            conn_ids = []
+            for new_def in copied_defs:
+                for cl in new_def.iter("ConnectList"):
+                    for it in cl.findall("Item"):
+                        oid = it.get("ID")
+                        if oid in id_map:
+                            it.set("ID", id_map[oid])
+            # 连接器登记进 ReferencedComponents（官方文件里每个连接器都有登记项）
+            seen_conn = set()
+            for el in sym.iter("Item"):
+                if el.get("Class") != "CIITPinConnectorComp":
+                    continue
+                cid = el.get("ID")
+                if cid and cid not in seen_conn:
+                    seen_conn.add(cid)
+                    conn_ids.append(cid)
+                    ref = ET.SubElement(self.refcomp, "Item")
+                    ref.set("ID", cid)
+                    ref.set("Class", "CIITPinConnectorComp")
 
             self.objs.append(sym)
             inner.set("SymCompID", sym.get("ID"))
@@ -313,6 +548,7 @@ class Assembler:
 
         if refdes:
             self.c.set_refdes(new_ciid, refdes)
+            self.register_refdes(refdes, donor=donor)
         if params:
             for idx, val in params.items():
                 self.c.set_param(inner, idx, val)
@@ -339,7 +575,11 @@ class Assembler:
         if donor_path is None:
             hit = find_part(family, part)
             if hit is None:
-                raise KeyError("样例库里没有 (%r, %r)" % (family, part))
+                raise KeyError(
+                    "样例库里没有 (%r, %r)。最接近的候选：%s\n"
+                    "（可用 msbuild.part_index() 查看全部 %d 个组合）"
+                    % (family, part, suggest_part(family, part) or "无",
+                       len(part_index())))
             donor_path, donor_refdes = hit[0], hit[1]
         elif donor_refdes is None:
             raise ValueError("给了 donor_path 就必须同时给 donor_refdes")
@@ -359,6 +599,63 @@ class Assembler:
 
     def new_id(self):
         return self.c.new_id()
+
+    # ---------- RefDes 注册 ----------
+    def register_refdes(self, refdes, donor=None, template=None):
+        """把 refdes 登记进层级位号管理器（缺失会导致 SPICE 丢掉该元件）。
+
+        donor  传 Donor 对象时，顺手拿它同位号的 RefDesInfo 当模板
+               （这样 RefDes 里的文件路径/图纸名与官方文件同构）
+        返回 True 表示新登记，False 表示已存在（幂等）。
+        """
+        m = _PREFIX_RE.match(refdes or "")
+        if m is None:
+            return False                  # 地（位号 "0"）本来就不登记
+        if not REGISTER_REFDES:
+            return False
+        cont = _refdes_container(self.c, create=True)
+        if cont is None:
+            return False
+        cir_map = cont.find("CIRToInfoMap")
+        if cir_map is None:
+            cir_map = ET.SubElement(cont, "CIRToInfoMap")
+        key = "&ASC" + refdes
+        for it in cir_map.findall("CIRToInfoMapItem"):
+            if it.get("CIRKey") == key:
+                return False              # 已有，别重复插
+
+        tpl = template
+        tpl_ref = None
+        if tpl is None and donor is not None:
+            tpl = donor_refdes_info(donor.circuit, donor.refdes)
+            tpl_ref = donor.refdes
+        ri = build_refdes_info(refdes, template=tpl, donor_refdes=tpl_ref,
+                               path=self.refdes_path,
+                               sheet=_sheet_name(cont))
+        if ri is None:
+            return False
+        item = ET.SubElement(cir_map, "CIRToInfoMapItem")
+        item.set("CIRKey", key)
+        item.append(ri)
+
+        # 前缀使用表：R / C / L / V ... 各自一条
+        ext = refdes_extension(self.c)
+        mgr = ext.find("RefDesMgrs/RefDesMgr") if ext is not None else None
+        if mgr is not None:
+            usage = mgr.find("RefDesPrefixUsageMap")
+            if usage is None:
+                usage = ET.SubElement(mgr, "RefDesPrefixUsageMap")
+            prefix = m.group(1)
+            have = {(u.get("Prefix") or "").replace("&ASC", "")
+                    for u in usage.findall("RefDesPrefixUsage")}
+            if prefix not in have:
+                u = ET.SubElement(usage, "RefDesPrefixUsage")
+                u.set("RefDes", "&ASC" + prefix)
+                u.set("Class", "CIITRefDesPrefixUsage")
+                u.set("Prefix", "&ASC" + prefix)
+                u.set("NextNumber", "1")
+        self.refdes_registered.append(refdes)
+        return True
 
     @staticmethod
     def _append_ref(parent, tag, ciid):
@@ -405,6 +702,57 @@ class Assembler:
             self.wire(node_id, resolved[i], resolved[i + 1])
         return node_id
 
+    def _node_text(self, node_id, x, y):
+        """取（或新建）某个 CiNode 的网络文字标签对象 CODNodeTextComp。
+
+        **关键（P20 修复）**：官方文件里**每一根**导线都带 `NodeText` 属性，指向一个
+        `CODNodeTextComp`；该对象的 `Links` 反向列出同一网络的所有导线。
+        这是 Multisim 把「几何导线」归组成「电气网络」的对象。
+
+        缺了它：
+          * 连通性报告（ReportNetlist，走 CiNode/Ports 成员关系）**仍然完全正确**；
+          * 但 SPICE 侧组不出网络，元件引脚各自孤立 → 元件在仿真里等效开路
+            （表现为：源电压能读到、电阻分压中点恒 0V、电流永远是 0）。
+        """
+        key = str(node_id)
+        if key in self.node_texts:
+            return self.node_texts[key]
+
+        tid = self.new_id()
+        item = ET.SubElement(self.objs, "Item")
+        item.set("ID", tid)
+        item.set("Class", "CODNodeTextComp")
+        nt = ET.SubElement(item, "CODNodeTextComp")
+        for k, v in (("Class", "CODNodeTextComp"), ("instID", "0"),
+                     ("Stretchable", "0"), ("Moveable", "1"),
+                     ("LabelSelectable", "1"), ("Selectable", "1"),
+                     ("LockedPenColor", "0"), ("LockedBrushColor", "0"),
+                     ("Layer", "511"), ("Output", ""), ("PenColor", "255"),
+                     ("FgColor", "0"), ("BgColor", "16777215"),
+                     ("Font-Height", "-13"), ("Font-Width", "0"),
+                     ("Font-Escapement", "0"), ("Font-Orientation", "0"),
+                     ("Font-Weight", "700"), ("Font-Italic", "0"),
+                     ("Font-Underline", "0"), ("Font-StrikeOut", "0"),
+                     ("Font-CharSet", "0"), ("Font-OutPrecision", "3"),
+                     ("Font-ClipPrecision", "2"), ("Font-Quality", "1"),
+                     ("Font-PitchAndFamily", "34"), ("Font-FaceName", "&ASCArial"),
+                     ("Transformer-M00", "1."), ("Transformer-M01", "0."),
+                     ("Transformer-M10", "0."), ("Transformer-M11", "1."),
+                     ("Transformer-M20", "%g." % x), ("Transformer-M21", "%g." % y),
+                     ("Hidden", "0"), ("HorizontalAlign", "0"),
+                     ("VerticalAlign", "0"), ("KeepCurrentFont", "0")):
+            nt.set(k, v)
+        ET.SubElement(nt, "Links")
+        self.node_texts[key] = tid
+        self.node_text_links[key] = nt.find("Links")
+
+        # 登记进 ReferencedComponents（官方文件里每个网络文字都有登记项）
+        if self.refcomp is not None:
+            ref = ET.SubElement(self.refcomp, "Item")
+            ref.set("ID", tid)
+            ref.set("Class", "CODNodeTextComp")
+        return tid
+
     def wire(self, node_id, a, b, color="0"):
         """在两个引脚之间画一条正交导线。"""
         pa = self.c.pin_info(a[0]).get(a[1])
@@ -438,6 +786,16 @@ class Assembler:
         lnk.set("Connect2", pb["def_ids"][0] if pb["def_ids"] else "")
         lnk.set("IsElvisHiddenWireFlags", "0")
         lnk.set("Node", node_id)
+        # 网络文字：把导线绑进 CiNode 对应的电气网络（见 _node_text 注释）
+        mid_x = sum(p[0] for p in pts) / float(len(pts))
+        mid_y = sum(p[1] for p in pts) / float(len(pts))
+        tid = self._node_text(node_id, mid_x, mid_y)
+        lnk.set("NodeText", tid)
+        links = self.node_text_links.get(str(node_id))
+        if links is not None:
+            li = ET.SubElement(links, "Item")
+            li.set("ID", item.get("ID"))
+            li.set("Class", "CIITLinkComp")
         pts_el = ET.SubElement(lnk, "Points")
         for x, y in pts:
             p = ET.SubElement(pts_el, "Item")
@@ -451,10 +809,40 @@ class Assembler:
         it = ET.SubElement(el, "Item")
         it.set("Value", "")
         it.set("Guid", _fresh_guid())
+
+        # 导线同样要登记进 ReferencedComponents（官方文件里每条导线都有登记项）
+        ref = ET.SubElement(self.refcomp, "Item")
+        ref.set("ID", item.get("ID"))
+        ref.set("Class", "CIITLinkComp")
         return item
 
     def save(self, path):
+        self._fix_refdes_path(path)
         return self.c.save(path)
+
+    def _fix_refdes_path(self, path):
+        """把已登记 RefDes 里的文件路径/图纸名改成真正要保存的文件。
+
+        从 donor 复制来的 RefDesInfo 里写着 donor 的绝对路径，指向一个
+        跟目标文件无关的 .ms14。留着它在层级解析里是脏数据，这里统一
+        改成本次输出的文件路径与图纸名。
+        """
+        full = os.path.abspath(path)
+        sheet = os.path.splitext(os.path.basename(path))[0]
+        cont = _refdes_container(self.c)
+        if cont is None:
+            return
+        cir = cont.get("CIR") or ""
+        if "/" in cir:
+            cont.set("CIR", cir.split("/", 1)[0] + "/" + sheet + ":")
+        for data in cont.iter("RefDesInfoData"):
+            rd = data.get("RefDes") or ""
+            parts = rd.split("!0")
+            # 结构: ['&ASC', '', '', '<refdes>', '<path>', '1', '<sheet>', '']
+            if len(parts) >= 7:
+                parts[4] = full
+                parts[6] = sheet
+                data.set("RefDes", "!0".join(parts))
 
     # ---------- 老式电压/电流探针 ----------
     def add_probe(self, net_name, x, y, kind="V", name=None, donor_path=None,
