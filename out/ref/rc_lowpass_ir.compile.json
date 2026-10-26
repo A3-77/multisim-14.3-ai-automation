@@ -109,7 +109,7 @@
       "node": "233431840"
     }
   ],
-  "bytes": 31759,
+  "bytes": 31752,
   "simulation": {
     "analysis": "transient",
     "start": 0.0,
