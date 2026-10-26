@@ -1,5 +1,16 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## 🎬 v0.6.1（2026-10-26）：Agent Acceptance Test —— 外部 Agent 自己设计并仿真一个电路
+>
+> 一个只读过 MCP `tools/list`、不知道 Multisim 任何内部概念的外部 Agent，拿到一句需求：
+> **"1V/1kHz 正弦，设计 fc≈500Hz 的一阶 RC 低通，跑瞬态，报实际幅值 / 理论幅值 / 误差"**。
+> 它自己选了 R=10 kΩ、C=33 nF，**13 次工具调用零错误一次通过**，
+> 输出幅值误差 **−0.577%**、相位误差 **−0.074°**，还用纯标准库从原始 CSV 独立复算出同一个增益。
+>
+> 👉 [完整案例：题目 + 电路图 + 波形图 + 13 次调用轨迹 + 8 个 API 问题](https://github.com/A3-77/multisim-14.3-ai-automation/releases/tag/v0.6.1-agent-acceptance)
+>
+> ---
+
 > ## ✅ v0.6.0（2026-10-26）：MCP Tool API —— 从"脚本"变成"能被调用的工具"
 >
 > v0.5.0 之前这条链是**脚本**：`nl_run.py --file xxx.txt`，一步焊死一步。
