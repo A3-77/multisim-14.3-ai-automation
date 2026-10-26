@@ -1,5 +1,71 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## ✅ v0.6.0（2026-10-26）：MCP Tool API —— 从"脚本"变成"能被调用的工具"
+>
+> v0.5.0 之前这条链是**脚本**：`nl_run.py --file xxx.txt`，一步焊死一步。
+> v0.6.0 把它拆成 **7 个有状态关系的工具**，任何 Agent 都能一步步建电路：
+>
+> ```
+> create_circuit ──► circuit_id
+>                        │
+>       ┌────────────────┼────────────────┐
+>       ▼                ▼                ▼
+>  add_component     connect         add_probe
+>       └────────────────┼────────────────┘
+>                        ▼
+>                    simulate ──► sim_id
+>                        │
+>               ┌────────┴────────┐
+>               ▼                 ▼
+>            measure         get_waveform
+> ```
+>
+> **1. 不是"把 Python 函数套一层 MCP"**
+>
+> 分了两层：`mcp_server.py` 只做 JSON-RPC 收发（薄到没分支逻辑），
+> `circuit_session.py` 是真正的业务层 —— 电路句柄、语义参数映射、
+> 唯一性检查、自动网络命名、**自动布局**、分析类型匹配、结构化错误。
+> 会话层能单独测试：`test_mcp_session.py` 57 项，不需要 Multisim。
+>
+> **2. Agent 永远看不到 Multisim**
+>
+> 传的是 `value=1.0, frequency=1000`，落到 IR 里是 `params={5: 1000.0}`。
+> 返回时又翻回 `"parameters": {"frequency": 1000.0}`。
+> 不传坐标 —— 布局由 `simulate` 时的 `plan_layout()` 按拓扑算。
+> schema 里做过自动检查：没有 `CiID` / `CiPort` / `CIITSymbolComp` / `SimState`。
+>
+> **3. 拓扑不支持就报错，不硬排**
+>
+> 第一版只支持单电源串联链到地（坐标是 v0.3.0/v0.5.0 真机验证过的那套）。
+> 并联会返回 `LAYOUT_UNSUPPORTED` 并指出分叉在哪：
+> `网络 'in' 有 2 个分支（R1.1, R2.1）`。
+>
+> **4. 错误是给 Agent 自纠用的**
+>
+> 每个错误都有 `code` / `message` / `hint` / `context`：
+>
+> ```json
+> {"code": "ANALYSIS_NOT_SUPPORTED",
+>  "message": "AC_VOLTAGE 不支持 dc（当前后端只验证过 transient）",
+>  "hint": "把 analysis 改成 'transient'，或者把源换成支持 'dc' 的类型。",
+>  "context": {"supported": ["transient"]}}
+> ```
+>
+> **5. 实测：MCP 链路和中文链路给出同一个答案**
+>
+> | | 增益 | 相位 |
+> | --- | --- | --- |
+> | MCP（`tools/mcp_client.py`） | **0.706316** | **−45.065°** |
+> | 中文（`tools/nl_run.py`） | 0.70632 | −45.06° |
+> | 理论 | 0.70745 | −44.97° |
+>
+> 直流：`V(source)=5.000000`、`V(ground)=0.000000`、`R=1000.0`（Multisim `RLCValue`）、
+> `I=0.005000 A`。**48 项断言全过**，走的是真实 MCP 协议（起子进程、JSON-RPC）。
+>
+> 细节：**`docs/mcp.md`**
+>
+> ---
+>
 > ## ✅ v0.5.0（2026-10-26）：直流静态电路 —— 一个假问题，一个真根因
 >
 > 用户最初给的验收句终于跑通了：
@@ -183,6 +249,7 @@
 | [docs/circuit-xml.md](docs/circuit-xml.md) | **电路 XML 对象模型**：两棵平行树、坐标系、引脚几何公式、参数存储位置 |
 | [docs/nl2ir.md](docs/nl2ir.md) | **中文 → Circuit IR**：支持的句式、解析算法、错误哲学、边界 |
 | [docs/dc-static.md](docs/dc-static.md) | **直流静态电路**：`EnumOutputs` 只能调一次的根因、两条取数路径、复现与排错顺序 |
+| [docs/mcp.md](docs/mcp.md) | **MCP Tool API**：7 个工具的输入输出、状态模型、错误码、自动布局、验收 |
 | [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
 | [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
 | [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
@@ -492,6 +559,52 @@ runtime\py32\python.exe -u tools/nl_run.py --file examples/nl/dc_5v.txt
 > 在 `run()` 之后、`read()` 之前再枚举一次，会让之后所有 `GetOutputData()`
 > 返回 `E_FAIL`，表现像"电路死了"。完整二分证据见 [docs/dc-static.md](docs/dc-static.md)。
 
+### 3.8 MCP Tool API：让 Agent 一步步建电路（v0.6.0）
+
+```bash
+# 起 server（必须 32 位 Python，COM 限制）
+runtime\py32\python.exe -u tools\mcp_server.py
+
+# 确定性验收：起子进程、走真实 MCP 协议、建 RC 与 DC 两个电路
+python tools\mcp_client.py
+
+# 会话层纯逻辑测试（不需要 Multisim）
+python tools\test_mcp_session.py      # 57 项
+```
+
+一次 RC 低通的完整调用序列（`tools/mcp_client.py` 里就是这么写的）：
+
+```
+create_circuit(name="rc_lowpass_mcp")                       -> c-a580bc84c8
+add_component(SIGNAL_VOLTAGE_SOURCES, AC_VOLTAGE, V1, 1.0, frequency=1000)
+add_component(RESISTOR, RESISTOR_VIRTUAL, R1, 1000)
+add_component(CAPACITOR, CAPACITOR_VIRTUAL, C1, 159e-9)
+add_component(POWER_SOURCES, GROUND, GND1)
+connect([["V1","+"], ["R1","1"]])                           -> 自动命名 "in"
+connect([["R1","2"], ["C1","1"]])                           -> 自动命名 "n1"
+connect([["C1","2"], ["V1","-"], ["GND1","1"]])             -> 自动命名 "0"
+add_probe("in")                                             -> P1
+add_probe("R1.2")                                           -> P2（引脚自动解析成网络）
+simulate()                                                  -> transient, sim_id
+measure()                                                   -> 增益 0.706316 / 相位 -45.065°
+```
+
+`simulate` 内部依次做：算布局 → 写回 IR → `validate()` → 编译 `.ms14` →
+开 Multisim → 读探针 → 落盘。**Agent 不需要给坐标，也不需要知道
+`CiID` / `CiPort` / `SimState` 这些词。**
+
+错误是结构化返回的，带 `hint` 和 `context`，LLM 接进来之后能自己纠正：
+
+```json
+{"ok": false, "error": {
+  "code": "ANALYSIS_NOT_SUPPORTED",
+  "message": "AC_VOLTAGE 不支持 dc（当前后端只验证过 transient）",
+  "hint": "把 analysis 改成 'transient'，或者把源换成支持 'dc' 的类型。",
+  "context": {"analysis": "dc", "source_part": "AC_VOLTAGE", "supported": ["transient"]}}}
+```
+
+工具表、错误码全表、自动布局规则见 [docs/mcp.md](docs/mcp.md)。
+
 ---
 
 ## 四、环境依赖
@@ -556,6 +669,7 @@ multisim-ctrl/
 │   ├── architecture.md        代码架构
 │   ├── deadends.md            死路清单与避坑
 │   ├── dc-static.md           直流静态电路：EnumOutputs 只能调一次的根因
+│   ├── mcp.md                 MCP Tool API：工具表 / 错误码 / 自动布局
 │   ├── next-steps.md          路线图
 │   ├── api.md                 COM API 全表（旧路线留存）
 │   └── shots/                 关键截图（8 张，按时间顺序）
@@ -570,6 +684,10 @@ multisim-ctrl/
 │   ├── circuit_ir.py          ★ Circuit IR 数据模型 + 校验（纯 JSON，无 XML 概念）
 │   ├── ir_compile.py          ★ IR → .ms14（只调用已验证 API）
 │   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
+│   ├── circuit_session.py     ★★ MCP 会话层：句柄 / 语义参数 / 自动布局 / 结构化错误
+│   ├── mcp_server.py          ★★ MCP Server（JSON-RPC over stdio，7 个工具）
+│   ├── mcp_client.py          ★ MCP 验收客户端（走真实协议，不调 Python 函数）
+│   ├── test_mcp_session.py    ★ 会话层测试：57 项，不需要 Multisim
 │   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
 │   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
 │   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
@@ -650,6 +768,11 @@ multisim-ctrl/
   `I=V_R/R=0.005000 A`。中文验收句端到端跑通（`docs/dc-static.md`）
 - **COM 调用顺序**：`EnumOutputs` 在 `run()` 之后调会作废输出缓冲
   （二分证据 P0~P4 见 `out/dc/bisect_*.json`）
+- **MCP Tool API**：7 个工具走真实 JSON-RPC 协议，RC 低通增益 **0.706316** /
+  相位 **−45.065°**（与 `nl_run` 的 0.70632 / −45.06° 一致），
+  直流 5 V / 1000 Ω / 5 mA；48 项断言全过（`out/mcp/acceptance.json`）
+- **MCP 会话层**：57 项纯逻辑测试（`tools/test_mcp_session.py`），
+  覆盖语义参数映射、自动网络命名、引脚冲突、探针上限、拓扑不支持的报错
 
 ### ⬜ 未验证（路线图见 [docs/next-steps.md](docs/next-steps.md)）
 
