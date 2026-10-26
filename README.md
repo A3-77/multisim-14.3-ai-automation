@@ -223,6 +223,66 @@ runtime\py32\python.exe tools/validate_rc.py out/ref/rc_lowpass.ms14 1000 main
 这是**一阶低通的教科书曲线**，也证明了输出不是静态假数据：如果电容没真正
 参与，三点增益会是一条平线。
 
+### 3.5 Circuit IR：电路中间表示层
+
+自然语言 → **Circuit IR** → `msbuild` → `.ms14` → Multisim → COM → 结果
+
+IR 是一份纯 JSON，只描述「有哪些元件、谁和谁连、探针放哪、怎么仿真」，
+里面**没有任何** Multisim 概念（没有 CiID / CiPort / CIITSymbolComp /
+Transformer / CiaParamList）。
+
+```json
+{
+  "components": [
+    {"refdes": "V1", "family": "SIGNAL_VOLTAGE_SOURCES", "part": "AC_VOLTAGE",
+     "value": 1.0, "params": {"5": 1000.0}, "position": [300, 300]},
+    {"refdes": "R1", "family": "RESISTOR", "part": "RESISTOR_VIRTUAL",
+     "value": 1000.0, "position": [500, 300]}
+  ],
+  "nets": [
+    {"name": "in",  "pins": ["V1.+", "R1.1"]},
+    {"name": "out", "pins": ["R1.2", "C1.1"]}
+  ],
+  "probes": [{"refdes": "P1", "net": "in"}, {"refdes": "P2", "net": "out"}],
+  "simulation": {"analysis": "transient", "stop": 0.006, "sample_rate": 200000}
+}
+```
+
+用「网络 → 引脚列表」而不是「引脚对 → 引脚对」，是因为前者天然表达多引脚
+网络（T 型交汇），不需要额外的结点对象。
+
+```bash
+python tools/ir_compile.py examples/rc_lowpass.ir.json -o out/ref/rc_lowpass_ir.ms14
+runtime\py32\python.exe tools/ir_run.py examples/rc_lowpass.ir.json
+```
+
+**端到端验收结果**（`tools/ir_run.py`）：
+
+| 检查项 | 结果 |
+| --- | --- |
+| IR → `.ms14` | 成功（31752 字节） |
+| Multisim 打开并注册探针 | `['V(探针1)', 'V(探针2)']` |
+| 输入幅值（IR 声明 1 V） | 0.99679 |
+| 增益 | 0.70632 / 理论 0.70745 |
+| 相位 | −45.06° / 理论 −44.97° |
+| 与直接 `add_part` 基线对比 | 增益 Δ=0，相位 Δ=0.000° |
+
+最后一行是重点：**IR 链路和手写 API 链路给出完全相同的答案**，
+说明 IR 层没有引入任何偏差。
+
+编译前会跑 `CircuitIR.validate()`，任何错误都在写盘**之前**拦住
+（`tools/test_ir_validate.py` 有 26 个反向用例）：
+
+```python
+c = CircuitIR.load("examples/rc_lowpass.ir.json")
+errs = c.validate()      # [] 表示合法
+if errs: raise SystemExit("\n".join(errs))
+```
+
+校验覆盖：refdes 唯一 / 元件型号在白名单 / 引脚存在 / 连接引用有效 /
+同一引脚不能属于两条网络（别名会先归一化再判重）/ 探针目标存在 /
+仿真参数合法 / 采样点足够。
+
 ---
 
 ## 四、环境依赖
@@ -286,11 +346,18 @@ multisim-ctrl/
 │   ├── next-steps.md          路线图
 │   ├── api.md                 COM API 全表（旧路线留存）
 │   └── shots/                 关键截图（8 张，按时间顺序）
+├── examples/
+│   └── rc_lowpass.ir.json     ★ Circuit IR 示例（RC 低通的完整描述）
 ├── tools/
 │   ├── dcl.py                 ★ DCL 编解码 + .ms14 读写（核心，零依赖）
 │   ├── mssafe.py              ★★ XML 无损往返（属性值换行保护）——**所有读写必须走它**
 │   ├── msmodel.py             ★ 电路对象模型层
 │   ├── msbuild.py             ★ 装配器（克隆元件 + 连线 + 探针）
+│   ├── circuit_ir.py          ★ Circuit IR 数据模型 + 校验（纯 JSON，无 XML 概念）
+│   ├── ir_compile.py          ★ IR → .ms14（只调用已验证 API）
+│   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
+│   ├── ir_compare.py          结构比对两个 .ms14
+│   ├── fitlib.py              正弦最小二乘拟合 + 一阶低通理论值
 │   ├── build_rc_lowpass.py    ★ 用 add_part 生成 RC 低通（`--freq` 改频率）
 │   ├── validate_rc.py         ★ RC 瞬态验证（最小二乘拟合幅值/相位 vs 理论）
 │   ├── build_acceptance.py    ★ 验收电路生成脚本（`--divider` 出分压器版本）
@@ -349,6 +416,9 @@ multisim-ctrl/
   从真实 `.ms14` 解析模板；已覆盖 DC 源、正弦源、R、C、GND、探针
 - **RC 低通三点频响全部对上理论**：100 Hz / 1 kHz / 10 kHz 的增益与相位
   误差分别 ≤ 0.0012 与 ≤ 0.15°（`tools/validate_rc.py`）
+- **Circuit IR 端到端跑通**：IR → `.ms14` → 仿真 → 拟合，结果与直接调用
+  `add_part` **完全一致**（增益 Δ=0、相位 Δ=0.000°）
+- **IR 校验在落盘前拦截错误**：26 个反向用例（`tools/test_ir_validate.py`）
 
 ### ⬜ 未验证（接手后第一件事）
 

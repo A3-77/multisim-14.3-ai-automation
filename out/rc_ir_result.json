@@ -1,0 +1,38 @@
+{
+  "ir": "examples/rc_lowpass.ir.json",
+  "ms14": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\ref\\rc_lowpass_ir.ms14",
+  "freq": 1000.0,
+  "rlc": {
+    "R1": 1000.0,
+    "C1": 1.59e-07
+  },
+  "channels": {
+    "V(探针1)": {
+      "amp": 0.9967907355104131,
+      "phase_deg": -2.6129206451826334e-05,
+      "offset": 5.543041727062704e-07
+    },
+    "V(探针2)": {
+      "amp": 0.7040488697547742,
+      "phase_deg": -45.06464258546255,
+      "offset": -2.231894503075768e-06
+    }
+  },
+  "sim": {
+    "stop": 0.006,
+    "sample_rate": 200000.0,
+    "n": 1200
+  },
+  "baseline": {
+    "gain": 0.7063156234034031,
+    "phase_deg": -45.0646164562561,
+    "d_gain": 0.0,
+    "d_phase_deg": 0.0
+  },
+  "gain": 0.7063156234034031,
+  "phase_deg": -45.0646164562561,
+  "theory_gain": 0.7074510619274477,
+  "theory_phase_deg": -44.972096663210095,
+  "pass": true,
+  "csv": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\rc_ir_waveform.csv"
+}

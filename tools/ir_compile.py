@@ -61,8 +61,20 @@ def _resolve_pin(comp, pin, actual_names):
 
 
 def compile_ir(src, out_path, verbose=True):
-    """把 IR（路径或 CircuitIR 对象）编译成 .ms14，返回编译报告 dict。"""
+    """把 IR（路径或 CircuitIR 对象）编译成 .ms14，返回编译报告 dict。
+
+    编译前先跑 CircuitIR.validate()。校验不过就直接抛 CompileError，
+    **一个字节的 .ms14 都不会写出来** —— 错误必须在落盘之前发现。
+    """
     c = irmod.CircuitIR.load(src) if isinstance(src, (str, bytes, os.PathLike)) else src
+
+    errs = c.validate()
+    if errs:
+        raise CompileError("IR 校验失败（%d 项），未生成任何文件：\n  - %s"
+                           % (len(errs), "\n  - ".join(errs)))
+    if verbose:
+        for w in c.warnings():
+            print("  [警告] %s" % w)
 
     a = msbuild.Assembler()
     ciid_of = {}          # IR refdes -> CiID

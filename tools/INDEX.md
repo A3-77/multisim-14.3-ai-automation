@@ -11,11 +11,18 @@
 | `mssafe.py` | **XML 无损往返**。保护属性值里的 `\r\n\t`，绕开 XML §3.3.3 归一化 |
 | `msmodel.py` | 电路对象模型层（`Circuit` / 元件 / 引脚 / 网表） |
 | `msbuild.py` | 装配器（从语料库克隆元件 + 连线 + 放探针）。`add_part()` 是统一入口 |
+| `circuit_ir.py` | **Circuit IR 数据模型 + 校验**（纯 JSON，不含任何 XML 概念） |
+| `ir_compile.py` | IR → `.ms14`（只调用已验证 API，落盘前先跑校验） |
+| `ir_run.py` | IR 端到端验收（编译 → 仿真 → 拟合 → 与直接 API 基线比对） |
+| `ir_compare.py` | 结构比对两个 `.ms14`（元件 / 主参数 / 网络成员 / 探针数） |
+| `fitlib.py` | 正弦最小二乘拟合 + 一阶低通理论值 |
 | `build_rc_lowpass.py` | 用 `add_part` 生成 RC 低通（`--freq` 改激励频率） |
 | `validate_rc.py` | RC 瞬态验证：最小二乘拟合幅值/相位，和理论值比对 |
 | `build_acceptance.py` | 验收电路生成（默认源网探针；`--divider` 出分压器版） |
 | `validate_acceptance.py` | 验收仿真 + 判定（读回电压/电流，比对期望值） |
 | `test_mssafe.py` | 回归测试：4 个原生样本 XML 往返必须逐字节一致 |
+| `test_ir.py` | Circuit IR 自检：结构 / params 类型 / JSON 往返 / 禁止出现 XML 概念 |
+| `test_ir_validate.py` | IR 校验的 26 个反向用例（含"非法 IR 不得落盘"） |
 | `p18_run2.py` | 稳健的瞬态读取模板（**必须在 `stop()` 之前 `read()`**） |
 
 ## 调查阶段对照表

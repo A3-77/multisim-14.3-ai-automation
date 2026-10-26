@@ -16,6 +16,9 @@ out/*
 # RC 低通三点频响的验证数据
 !out/p19_rc_*.json
 !out/p19_rc_*.csv
+# Circuit IR 端到端验收的数据
+!out/rc_ir_result.json
+!out/rc_ir_waveform.csv
 
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/
