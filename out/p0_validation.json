@@ -3,7 +3,7 @@
     "source": {
       "label": "source",
       "file": "out\\ref\\acceptance.ms14",
-      "timestamp": "2026-10-26T12:53:24",
+      "timestamp": "2026-10-26T13:25:36",
       "expect_v": 5.0,
       "transient_seconds": 0.01,
       "components": [
@@ -52,7 +52,7 @@
     "divider": {
       "label": "divider",
       "file": "out\\ref\\acceptance_divider.ms14",
-      "timestamp": "2026-10-26T12:53:29",
+      "timestamp": "2026-10-26T13:25:51",
       "expect_v": 2.5,
       "transient_seconds": 0.01,
       "components": [
@@ -99,6 +99,6 @@
       "multisim_version": "Multisim 14.3"
     }
   },
-  "timestamp": "2026-10-26T12:53:29",
+  "timestamp": "2026-10-26T13:25:51",
   "all_pass": true
 }

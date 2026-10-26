@@ -178,6 +178,51 @@ G.click(725, 436)                             # 点到目标网络上
 
 保存后文件里确实多了探针对象（`CiProbeExtComp`）。
 
+### 3.4 统一元件 API + RC 低通（第二个验收案例，已通过）
+
+`Assembler.add_part(family, part, refdes, value=, x=, y=, params=)`
+按 `(family, part)` 从真实 `.ms14` 里找模板并克隆，**调用方不碰任何 XML ID**。
+
+```python
+import msbuild
+a = msbuild.Assembler()
+v1, _ = a.add_part("SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                   value=1.0, x=300, y=300, params={5: 1000.0})  # 1V / 1kHz 正弦
+r1, _ = a.add_part("RESISTOR",  "RESISTOR_VIRTUAL",  "R1", value=1000.0, x=500, y=300)
+c1, _ = a.add_part("CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=159e-9, x=700, y=400)
+gnd,_ = a.add_part("POWER_SOURCES", "GROUND", "0", x=300, y=420)
+
+n_in  = a.connect([(v1, "1"), (r1, "1")], name="in")
+n_out = a.connect([(r1, "2"), (c1, "1")], name="out")
+n_gnd = a.connect([(v1, "2"), (gnd, "1"), (c1, "2")], name="0")
+
+a.add_probe_ext(*a.net_vertices(n_in)[1])     # 探针必须落在导线顶点
+a.add_probe_ext(*a.net_vertices(n_out)[1])    # 序号自动唯一
+a.save("out/ref/rc_lowpass.ms14")
+```
+
+一条命令生成 + 验证：
+
+```bash
+python tools/build_rc_lowpass.py                      # 1 kHz，出 out/ref/rc_lowpass.ms14
+runtime\py32\python.exe tools/validate_rc.py out/ref/rc_lowpass.ms14 1000 main
+```
+
+**实测三点频响**（`tools/validate_rc.py` 用最小二乘拟合幅值和相位，
+不是靠找峰）：
+
+| 频率 | 实测增益 | 理论 \|H\| | 实测相位 | 理论 ∠H |
+| --- | --- | --- | --- | --- |
+| 100 Hz | 0.99520 | 0.99505 | −5.66° | −5.71° |
+| 1 kHz（≈fc） | 0.70632 | 0.70745 | −45.06° | −44.97° |
+| 10 kHz | 0.10015 | 0.09960 | −84.43° | −84.28° |
+
+`fc = 1/(2πRC) = 1001 Hz`，`R1=1000 Ω`、`C1=159 nF` 均由 Multisim 自己报回
+（`RLCValue`），不是我们写的值。
+
+这是**一阶低通的教科书曲线**，也证明了输出不是静态假数据：如果电容没真正
+参与，三点增益会是一条平线。
+
 ---
 
 ## 四、环境依赖
@@ -245,7 +290,9 @@ multisim-ctrl/
 │   ├── dcl.py                 ★ DCL 编解码 + .ms14 读写（核心，零依赖）
 │   ├── mssafe.py              ★★ XML 无损往返（属性值换行保护）——**所有读写必须走它**
 │   ├── msmodel.py             ★ 电路对象模型层
-│   ├── msbuild.py             ★ 装配器（克隆元件 + 连线）
+│   ├── msbuild.py             ★ 装配器（克隆元件 + 连线 + 探针）
+│   ├── build_rc_lowpass.py    ★ 用 add_part 生成 RC 低通（`--freq` 改频率）
+│   ├── validate_rc.py         ★ RC 瞬态验证（最小二乘拟合幅值/相位 vs 理论）
 │   ├── build_acceptance.py    ★ 验收电路生成脚本（`--divider` 出分压器版本）
 │   ├── validate_acceptance.py ★ 验收仿真（读回电压 + 判定）
 │   ├── test_mssafe.py         ★ 回归测试：XML 往返必须逐字节一致
@@ -268,6 +315,9 @@ multisim-ctrl/
 │   ├── own_blank.ms14         用自研压缩器重打包的空白电路（Multisim 能打开）
 │   ├── acceptance.ms14        验收电路（V1 5V + R1 1kΩ + C1 + GND，探针在源网）
 │   ├── acceptance_divider.ms14 验收电路（分压器，探针在中点，应读 2.5V）
+│   ├── rc_lowpass.ms14        RC 低通（1kHz 激励，Vin/Vout 双探针）
+│   ├── rc_lowpass_100Hz.ms14  RC 低通频响验证点（100 Hz）
+│   ├── rc_lowpass_10kHz.ms14  RC 低通频响验证点（10 kHz）
 │   ├── with_probes.ms14       Multisim 保存的、带探针的版本
 │   └── probe_ext_full.xml     探针对象完整 XML（最重要的参考样本）
 ├── msc.py / cli.py / demo.py   COM API 路线（阶段一产物）
@@ -293,21 +343,24 @@ multisim-ctrl/
 - **从空白电路生成分压器，中点实测 2.5 V**（证明 R1/R2 真的进了 SPICE 网表并导通）
 - **从空白电路生成 V-R-C-GND 串联链，中点实测 5 V**（证明电容在直流下开路、电阻无压降）
 - 原生 555 电路、运放电路经本仓库读写后，8 个输出读数与原文件完全一致
+- **纯代码生成新式探针，且多探针可区分**：`LocalName` 序号唯一后
+  `EnumOutputs()` 返回 `['V(探针1)', 'V(探针2)']`，两条读数各自正确
+- **统一元件 API `add_part(family, part, ...)`**：不写死 XML ID，按家族/型号
+  从真实 `.ms14` 解析模板；已覆盖 DC 源、正弦源、R、C、GND、探针
+- **RC 低通三点频响全部对上理论**：100 Hz / 1 kHz / 10 kHz 的增益与相位
+  误差分别 ≤ 0.0012 与 ≤ 0.15°（`tools/validate_rc.py`）
 
 ### ⬜ 未验证（接手后第一件事）
 
-- 探针能否纯代码生成（结构已摸清，已实现 `clone_probe_ext`，但只覆盖新式 ProbeExt）
-- 多探针同文件（两个 ProbeExt 会拿到**同名**输出 `V(探针2)`，COM 读取报错——
-  需要给探针显式命名，或一个文件一个探针）
+- `RESISTOR_RATED` / `CAPACITOR_RATED`（family `RATED_VIRTUAL`）路线
+- 运放、555 等多引脚元件的通用 `add_part` 支持
 - 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
 
 ### ❓ 已知未知
 
-- 探针对网络的绑定机制：`CiProbeExtComp/Ports` 是空的，网络名可能通过
-  `CSCH_CAPVirtualComponentPin@lastnet` 传递（推测，未证实）
-- 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
 - `.ms14` 里 `&UNI..._uc<hash>` 的单位哈希表（电阻 `103a9`、电压 `100b5V` 是实测值，
   完整映射表未建）
+- 探针序号超过 9 时的命名方式（当前只支持一位数字）
 
 ---
 

@@ -10,7 +10,9 @@
 | `dcl.py` | PKWARE DCL 编解码 + `.ms14` 容器读写。零第三方依赖 |
 | `mssafe.py` | **XML 无损往返**。保护属性值里的 `\r\n\t`，绕开 XML §3.3.3 归一化 |
 | `msmodel.py` | 电路对象模型层（`Circuit` / 元件 / 引脚 / 网表） |
-| `msbuild.py` | 装配器（从语料库克隆元件 + 连线 + 放探针） |
+| `msbuild.py` | 装配器（从语料库克隆元件 + 连线 + 放探针）。`add_part()` 是统一入口 |
+| `build_rc_lowpass.py` | 用 `add_part` 生成 RC 低通（`--freq` 改激励频率） |
+| `validate_rc.py` | RC 瞬态验证：最小二乘拟合幅值/相位，和理论值比对 |
 | `build_acceptance.py` | 验收电路生成（默认源网探针；`--divider` 出分压器版） |
 | `validate_acceptance.py` | 验收仿真 + 判定（读回电压/电流，比对期望值） |
 | `test_mssafe.py` | 回归测试：4 个原生样本 XML 往返必须逐字节一致 |
@@ -25,6 +27,7 @@
 | 14–16 | `p14_*`–`p16_*` | 波形读取时序、`V(pin)` 注入、符号属性/引脚类型比对 | `docs/probe.md` |
 | 17 | `p17_*` | 探针与引脚普查：`NodeText`、junction、`PortID`、`ConnectList` | `docs/deadends.md` 三～五 |
 | 18 | `p18_*` | **根因定位**：分离容器压缩 vs XML 往返，最终锁定 `CIITDiagram@SimState` | `docs/p0-acceptance.md`、`docs/deadends.md` 六 |
+| 19 | `p19_*` | **探针唯一命名 + 元件定位锚点**：`LocalName` 序号决定 COM 输出名；`add()` 的 `anchor="pin"` | `docs/probe.md` 4.1 |
 
 ### p18 里最关键的四支（想复现根因就看它们）
 

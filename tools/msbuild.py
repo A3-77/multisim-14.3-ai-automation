@@ -29,56 +29,99 @@ INDEX_PATH = os.path.join(ROOT, "corpus", "samples_index.json")
 
 
 # ---------------------------------------------------------------- 样例库索引
+# 元件模板（donor）来源 = 真实的 .ms14 文件。
+#
+# ★ 2026-10-26 修正：旧实现读 corpus/samples_index.json 里的 "cache" 路径，
+#   但那些 out/samples/*.ms14 其实是**残缺片段**（从某个属性中间开始，
+#   连 XML 头都没有），根本打不开 —— add_part() 一调就 ParseError。
+#   现在改成直接扫真实 .ms14，索引在内存里缓存。
+#
+# 扫描顺序：先 corpus/samples14（随仓库提交，10 个文件，覆盖 R/C/L/GND/
+# 电源/555/运放/buck），找不到再懒加载扫本机 Multisim 安装目录的 108 个
+# 官方样例（不随仓库走，换机器可能没有）。
+DONOR_DIRS = [os.path.join(ROOT, "corpus", "samples14")]
+INSTALL_SAMPLES = os.path.join(
+    os.environ.get("PUBLIC", r"C:\Users\Public"),
+    "Documents", "National Instruments", "Circuit Design Suite 14.3", "samples")
+
 _INDEX = {}
 _CIRCUITS = {}
 
 
-def part_index():
-    """{(family, part): [(样例 cache 路径, 位号), ...]}，按样例出现顺序去重。
+def _iter_ms14(d):
+    if not os.path.isdir(d):
+        return
+    for root, _dirs, files in os.walk(d):
+        for f in sorted(files):
+            if f.lower().endswith(".ms14"):
+                yield os.path.join(root, f)
 
-    数据源 corpus/samples_index.json（108 个官方样例的元件清单），
-    cache 是解压后的明文 XML，可直接喂 msmodel。
+
+def _scan_dirs(dirs):
+    """扫若干目录下的 .ms14，返回 {(family, part): [(路径, 位号), ...]}。"""
+    idx = {}
+    for d in dirs:
+        for p in _iter_ms14(d):
+            try:
+                c = load_donor(p)
+            except Exception:
+                continue
+            for comp in c.components():
+                ref = comp.get("refdes") or ""
+                if not ref:
+                    continue
+                key = ((comp.get("family") or ""), (comp.get("part") or ""))
+                lst = idx.setdefault(key, [])
+                if (p, ref) not in lst:
+                    lst.append((p, ref))
+    return idx
+
+
+def part_index():
+    """{(family, part): [(ms14 路径, 位号), ...]}。
+
+    数据源是真实的 .ms14（默认 corpus/samples14）。返回的路径可以直接
+    喂给 msmodel.Circuit.load，也可以当 add_part(donor_path=...) 的参数。
     """
     if "idx" in _INDEX:
         return _INDEX["idx"]
-    idx = {}
-    try:
-        data = json.load(open(INDEX_PATH, encoding="utf-8"))
-    except Exception:
-        data = []
-    for entry in data:
-        cache = entry.get("cache")
-        if not cache or not os.path.exists(cache):
-            continue
-        for comp in entry.get("components") or []:
-            key = ((comp.get("family") or ""), (comp.get("part") or ""))
-            ref = (comp.get("name") or "").replace("&ASC", "")
-            if not ref:
-                continue
-            lst = idx.setdefault(key, [])
-            if (cache, ref) not in lst:
-                lst.append((cache, ref))
+    idx = _scan_dirs(DONOR_DIRS)
     _INDEX["idx"] = idx
+    _INDEX["extended"] = False
     return idx
 
 
 def find_part(family, part=None):
-    """按 (family, part) 找第一个可用样例元件，返回 (cache 路径, 位号)。
+    """按 (family, part) 找第一个可用模板，返回 (ms14 路径, 位号)。
 
     part 传 None 表示"这个家族里随便哪个"。找不到返回 None。
+    corpus/samples14 里没有时，会自动再扫一遍 Multisim 安装目录的官方样例
+    （只扫一次，结果并入索引）。
     """
     idx = part_index()
-    if part is None:
-        for (f, _p), lst in sorted(idx.items()):
-            if f.upper() == (family or "").upper() and lst:
+
+    def lookup():
+        if part is None:
+            for (f, _p), lst in sorted(idx.items()):
+                if f.upper() == (family or "").upper() and lst:
+                    return lst[0]
+            return None
+        if (family, part) in idx:
+            return idx[(family, part)][0]
+        fl, pl = (family or "").lower(), (part or "").lower()
+        for (f, p), lst in idx.items():
+            if (f or "").lower() == fl and (p or "").lower() == pl:
                 return lst[0]
         return None
-    if (family, part) in idx:
-        return idx[(family, part)][0]
-    fl, pl = (family or "").lower(), (part or "").lower()
-    for (f, p), lst in idx.items():
-        if (f or "").lower() == fl and (p or "").lower() == pl:
-            return lst[0]
+
+    hit = lookup()
+    if hit is not None:
+        return hit
+    if not _INDEX.get("extended") and os.path.isdir(INSTALL_SAMPLES):
+        _INDEX["extended"] = True
+        idx.update({k: v for k, v in _scan_dirs([INSTALL_SAMPLES]).items()
+                    if k not in idx})
+        return lookup()
     return None
 
 
@@ -113,6 +156,21 @@ def load_donor(path):
 
 def _fresh_guid():
     return "{%s}" % str(uuid.uuid4()).upper()
+
+
+def _probe_local_name(base, index):
+    """把探针的 LocalName 换成指定序号。
+
+    donor 里探针的 LocalName 形如 ``&UNI_uc263a294881``，
+    其 RefDes 管理器条目是 ``IRPrefix="&UNI_uc263a29488" IRNumber="1"``，
+    即 **LocalName = 前缀 + 序号**。所以换序号只需替换最后一位数字。
+
+    这个值直接决定 COM ``EnumOutputs`` 里的名字：序号重复 → 名字重复 →
+    两个探针分不开（见 Assembler.add_probe_ext 的说明）。
+    """
+    s = base or ""
+    stem = s[:-1] if s and s[-1].isdigit() else s
+    return "%s%d" % (stem, index)
 
 
 # ---------------------------------------------------------------- RefDes 注册
@@ -384,8 +442,18 @@ class Assembler:
         self.node_text_links = {}        # CiNode CiID -> <Links> 元素
 
     # ---------- 克隆元件 ----------
-    def add(self, donor, x=None, y=None, refdes=None, params=None):
-        """把 donor 元件放到 (x, y)，返回 (新 CiID, [(引脚CiID, 引脚名)...])。"""
+    def add(self, donor, x=None, y=None, refdes=None, params=None,
+            anchor="origin"):
+        """把 donor 元件放到 (x, y)，返回 (新 CiID, [(引脚CiID, 引脚名)...])。
+
+        anchor 决定 (x, y) 的含义：
+            "origin"  元件符号的 Transformer-M20/M21（旧行为，默认）
+            "pin"     引脚坐标的质心。**新代码建议用这个** —— 因为
+                      corpus/samples14 里有些元件的符号锚点根本不是它的
+                      实际位置（例：某 RESISTOR_VIRTUAL 符号 M20/M21=(0,-18)，
+                      引脚却在 (495,108)），按 origin 放会散到图纸角落。
+                      按引脚质心放，元件的电气位置一定落在你指定的点上。
+        """
         comp = copy.deepcopy(donor.comp_item)
         old_ciid = donor.ciid
         new_ciid = self.new_id()
@@ -395,8 +463,16 @@ class Assembler:
         inner.set("InstanceID", _fresh_guid())
 
         dx = dy = 0.0
-        if x is not None and y is not None and donor.pos is not None:
-            dx, dy = x - donor.pos[0], y - donor.pos[1]
+        if x is not None and y is not None:
+            if anchor == "pin":
+                info = donor.circuit.pin_info(donor.ciid)
+                pts = [v["xy"] for v in info.values() if v.get("xy")]
+                if pts:
+                    cx = sum(p[0] for p in pts) / len(pts)
+                    cy = sum(p[1] for p in pts) / len(pts)
+                    dx, dy = x - cx, y - cy
+            elif donor.pos is not None:
+                dx, dy = x - donor.pos[0], y - donor.pos[1]
 
         # 模型
         if donor.model_item is not None:
@@ -555,7 +631,7 @@ class Assembler:
         return new_ciid, port_ids
 
     def add_part(self, family, part, refdes, value=None, x=None, y=None,
-                 donor_path=None, donor_refdes=None):
+                 donor_path=None, donor_refdes=None, params=None):
         """统一元件入口：按 (family, part) 从样例库找模板，克隆进当前电路。
 
         与 add() 的区别只在"找模板"这一步：add() 要求调用方自己给 Donor，
@@ -568,6 +644,9 @@ class Assembler:
             x, y          放置位置（元件原点）；None 表示沿用模板坐标
             donor_path    指定 donor（路径或 Circuit）；给了就忽略索引
             donor_refdes  指定 donor 里的位号（配合 donor_path）
+            params        额外参数 {参数序号: 数值}，写进 CiaParamList/doubles
+                          并用 eng() 同步人类可读副本。用于 AC_VOLTAGE 这类
+                          多参数元件（idx 1 = 幅值，idx 5 = 频率 Hz）。
 
         返回 (新 CiID, [(引脚CiID, 引脚名), ...])，与 add() 一致。
         克隆沿用 add() 里已修好的 PortID / ConnectList / Circuit / Model 重映射。
@@ -586,9 +665,11 @@ class Assembler:
 
         donor_circuit = load_donor(donor_path)
         d = Donor(donor_circuit, donor_refdes)
-        ciid, ports = self.add(d, x=x, y=y, refdes=refdes)
+        ciid, ports = self.add(d, x=x, y=y, refdes=refdes, anchor="pin")
         if value is not None:
             self.c.set_value_by_refdes(refdes, value)
+        if params:
+            self.set_params(refdes, params)
 
         # 记一笔来源，方便调用方写报告
         self.last_part = {"family": family, "part": part, "refdes": refdes,
@@ -599,6 +680,34 @@ class Assembler:
 
     def new_id(self):
         return self.c.new_id()
+
+    def set_params(self, refdes, params):
+        """按参数序号写 CiaParamList/doubles，并同步 parameters 的人类可读副本。
+
+        params = {序号: 数值}。序号就是 doubles 里的下标（0 起）。
+
+        已知布局（实测）：
+            AC_VOLTAGE（正弦源）：[1]=幅值 V，[5]=频率 Hz，[3]=相位，[7]=直流偏置
+            RESISTOR_VIRTUAL / CAPACITOR_VIRTUAL（原生 14 文件）：doubles 为空，
+                值只在 parameters 字符串里 —— 这种情况必须用 add_part(value=...)
+                走 set_value，本方法对它们是空操作。
+        """
+        comp = self.c.find(refdes)["comp"]
+        attrs = comp.find("Attributes")
+        if attrs is None or len(attrs) <= msmodel.ATTR_PARAMS:
+            return
+        pl = attrs[msmodel.ATTR_PARAMS].find("CiaParamList")
+        if pl is None:
+            return
+        doubles = pl.find("doubles")
+        nums = doubles.findall("Item") if doubles is not None else []
+        ps_el = pl.find("parameters")
+        ps = ps_el.findall("Item") if ps_el is not None else []
+        for idx, val in params.items():
+            if idx < len(nums):
+                nums[idx].set("Value", msmodel._num_str(val))
+            if idx < len(ps):
+                ps[idx].set("Value", "&ASC" + msmodel.eng(val))
 
     # ---------- RefDes 注册 ----------
     def register_refdes(self, refdes, donor=None, template=None):
@@ -705,14 +814,16 @@ class Assembler:
     def _node_text(self, node_id, x, y):
         """取（或新建）某个 CiNode 的网络文字标签对象 CODNodeTextComp。
 
-        **关键（P20 修复）**：官方文件里**每一根**导线都带 `NodeText` 属性，指向一个
-        `CODNodeTextComp`；该对象的 `Links` 反向列出同一网络的所有导线。
-        这是 Multisim 把「几何导线」归组成「电气网络」的对象。
+        官方文件里每根导线都带 `NodeText` 属性指向一个 `CODNodeTextComp`，
+        该对象的 `Links` 反向列出同一网络的所有导线。生成的电路照抄这个结构，
+        目的是让文件和官方文件的形态一致（GUI 打开时行为更接近原生）。
 
-        缺了它：
-          * 连通性报告（ReportNetlist，走 CiNode/Ports 成员关系）**仍然完全正确**；
-          * 但 SPICE 侧组不出网络，元件引脚各自孤立 → 元件在仿真里等效开路
-            （表现为：源电压能读到、电阻分压中点恒 0V、电流永远是 0）。
+        ⚠️ 2026-10-26 更正：这里原来写着「缺了它 SPICE 组不出网络、元件等效开路」，
+        **那是错的**，属于当时对「电阻电流恒 0」的错误归因。真实根因是
+        `CIITDiagram@SimState` 属性内的换行被 XML 解析器归一化，见
+        tools/mssafe.py 文件头。NodeText 属于「照抄原生结构」的锦上添花，
+        不是仿真成立的必要条件 —— 实测 3 引脚中点在没有额外结点对象的情况下
+        也能读到正确的 2.5 V。
         """
         key = str(node_id)
         if key in self.node_texts:
@@ -985,3 +1096,115 @@ class Assembler:
             self.c.diagram.append(tpt)
 
         return new_ciid, new_draw_id
+
+    # ---------- 新式电压探针（ProbeExt）----------
+    def add_probe_ext(self, x, y, index=None, donor_path=None):
+        """克隆一个 14.3 新式电压探针（CIITProbeExtComponent + CiProbeExtComp）。
+
+        与 add_probe()（老式 CiProbeComp，靠 NetName 显式绑网络）不同，新式探针
+        **没有任何网络引用**，靠 Transformer-M20/M21 精确落在导线顶点上吸附网络。
+
+        参数：
+            x, y       落点，必须是目标网络导线的**一个顶点**（线段中间无效）
+            index      探针序号，默认按已有探针数自动 +1
+            donor_path 探针模板来源，默认 out/ref/with_probes.ms14
+        返回 (新电气 CiID, 新绘图 ID)
+
+        ★ 唯一命名（2026-10-26 实测定论，之前多探针重名的根因）：
+            CiProbeExtComp@LocalName = <IRPrefix><IRNumber>，如 &UNI_uc263a294881。
+            LocalName 就是 COM EnumOutputs 里的名字来源。克隆时如果照抄 donor 的
+            LocalName，两个探针名字完全相同 → EnumOutputs 返回两条 V(探针2) →
+            RequestOutput 无法区分，读回直接抛「未指定的错误」。
+            把序号改成唯一值后实测得到 ['V(探针1)', 'V(探针2)']，两条读数各自正确。
+
+        注意：序号只用 1 位（1..9）。超过 9 需要另找分隔方式，暂不支持。
+        """
+        donor_path = donor_path or os.path.join(ROOT, "out", "ref", "with_probes.ms14")
+        donor = load_donor(donor_path)
+
+        draw = None
+        for e in donor.objects:
+            inner = list(e)
+            if inner and inner[0].get("Class") == "CIITProbeExtComponent":
+                draw = e
+                break
+        elec = None
+        for e in donor.elements:
+            if e.get("Class") == "CiProbeExtComp":
+                elec = e
+                break
+        if draw is None or elec is None:
+            raise RuntimeError("donor %s 里没有新式 ProbeExt" % donor_path)
+
+        old_draw_id = draw.get("ID")
+        old_elec_id = elec.get("CiID")
+
+        # 1) 绘图对象：新 ID + 落点
+        new_draw = copy.deepcopy(draw)
+        new_draw_id = self.new_id()
+        new_draw.set("ID", new_draw_id)
+        ndi = list(new_draw)[0]
+        ndi.set("Transformer-M20", "%g" % x)
+        ndi.set("Transformer-M21", "%g" % y)
+
+        # 2) 电气对象：新 CiID + 回指 + 唯一 LocalName
+        new_elec = copy.deepcopy(elec)
+        new_elec_id = self.new_id()
+        new_elec.set("CiID", new_elec_id)
+        nei = list(new_elec)[0]
+        nei.set("SymCompID", new_draw_id)
+        nei.set("InstanceID", _fresh_guid())
+        nei.set("Circuit", self.circuit_ciid)
+        if index is None:
+            index = self.probe_count() + 1
+        nei.set("LocalName", _probe_local_name(nei.get("LocalName"), index))
+
+        # 3) 双向引用 + 子树内所有旧 ID 重映射（COMPHANDLE_EXT 等）
+        ndi.set("CiProbeExtComp", new_elec_id)
+        for tree in (new_draw, new_elec):
+            for el in tree.iter():
+                for k, v in list(el.attrib.items()):
+                    if v == old_draw_id:
+                        el.set(k, new_draw_id)
+                    elif v == old_elec_id:
+                        el.set(k, new_elec_id)
+
+        self.objs.append(new_draw)
+        self.els.append(new_elec)
+
+        # 4) 注册进 CiCircuit/ProbeExts（不注册 = 探针不存在）
+        pe = self.circuit_inner.find("ProbeExts")
+        if pe is None:
+            pe = ET.SubElement(self.circuit_inner, "ProbeExts")
+        it = ET.SubElement(pe, "Item")
+        it.set("CiID", new_elec_id)
+
+        self.last_probe = {"ciid": new_elec_id, "draw": new_draw_id,
+                           "x": x, "y": y, "index": index,
+                           "local_name": nei.get("LocalName")}
+        return new_elec_id, new_draw_id
+
+    def probe_count(self):
+        """当前电路里已有的新式探针数。"""
+        return sum(1 for e in self.els if e.get("Class") == "CiProbeExtComp")
+
+    def net_vertices(self, node_ciid):
+        """某条网络上所有导线的顶点坐标（探针只能落在这里）。
+
+        返回 [(x, y), ...]，按导线顺序去重。
+        """
+        out = []
+        for e in self.objs:
+            inner = list(e)
+            if not inner or inner[0].get("Class") != "CIITLinkComp":
+                continue
+            if inner[0].get("Node") != node_ciid:
+                continue
+            pts = inner[0].find("Points")
+            if pts is None:
+                continue
+            for p in pts:
+                xy = (_f(p.get("X")), _f(p.get("Y")))
+                if xy not in out:
+                    out.append(xy)
+        return out

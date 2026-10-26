@@ -188,9 +188,48 @@ print(len(list(t.iter("CiProbeExtComp"))), "个探针")   # 期望 ≥ 1
 
 ---
 
-## 4. 未解之谜：探针怎么绑定网络？（接手第一优先）
+## 4. 探针怎么绑定网络？（已解决）
 
-这是**唯一挡住"纯代码生成探针"的问题**，我们把已知事实列清楚：
+**结论：靠几何吸附。** `CIITProbeExtComponent` 的 `Transformer-M20/M21`
+必须精确落在目标网络导线的**一个顶点**上（导线拐点或端点）。
+落在线段中间、或者落在引脚坐标上，都不注册 output。
+
+纯代码路线已经跑通，见 `msbuild.Assembler.add_probe_ext()`。
+
+### 4.1 多探针重名（2026-10-26 解决）
+
+**症状**：一个文件里放两个克隆探针，`EnumOutputs()` 返回两条 `V(探针2)`，
+`RequestOutput` 无法区分，`read()` 直接抛「未指定的错误」。
+
+**根因**：`CiProbeExtComp@LocalName` 就是 COM 输出名的来源。
+克隆时照抄 donor 的 `LocalName`（`&UNI_uc263a294881`），两个探针名字完全相同。
+
+RefDes 管理器里的条目印证了命名规则：
+
+```xml
+<CIRToInfoMapItem CIRKey="&UNI_uc263a294881">
+  <RefDesInfo IRPrefix="&UNI_uc263a29488" IRNumber="1" ... />
+</CIRToInfoMapItem>
+```
+
+即 **`LocalName` = `IRPrefix` + `IRNumber`**。
+
+**修法**：克隆时把序号改成唯一值（`&UNI_uc263a294882`）。
+
+**实测结果**（`out/p19_two_probes.ms14`，一个探针在源网、一个在中点）：
+
+```
+outputs: ['V(探针1)', 'V(探针2)']
+V(探针1)  n=2000  min=2.5  max=2.5     ← 中点
+V(探针2)  n=2000  min=5    max=5       ← 源网
+```
+
+两个输出都注册成功，读数各自正确。
+
+**限制**：序号只用一位（1..9）。超过 9 个探针需要另找分隔方式，目前不支持。
+
+### 4.2 早期排查记录（保留，说明为什么当初卡住）
+
 
 ### 已知
 
