@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "name": "rc_lowpass",
+  "components": [
+    {
+      "refdes": "V1",
+      "family": "SIGNAL_VOLTAGE_SOURCES",
+      "part": "AC_VOLTAGE",
+      "value": 1.0,
+      "params": {
+        "5": 1000.0
+      },
+      "position": [300.0, 300.0]
+    },
+    {
+      "refdes": "R1",
+      "family": "RESISTOR",
+      "part": "RESISTOR_VIRTUAL",
+      "value": 1000.0,
+      "position": [500.0, 300.0]
+    },
+    {
+      "refdes": "C1",
+      "family": "CAPACITOR",
+      "part": "CAPACITOR_VIRTUAL",
+      "value": 1.59e-07,
+      "position": [700.0, 400.0]
+    },
+    {
+      "refdes": "GND1",
+      "family": "POWER_SOURCES",
+      "part": "GROUND",
+      "position": [300.0, 420.0]
+    }
+  ],
+  "nets": [
+    {
+      "name": "in",
+      "pins": ["V1.+", "R1.1"]
+    },
+    {
+      "name": "out",
+      "pins": ["R1.2", "C1.1"]
+    },
+    {
+      "name": "0",
+      "pins": ["V1.-", "GND1.1", "C1.2"]
+    }
+  ],
+  "probes": [
+    {
+      "refdes": "P1",
+      "kind": "V",
+      "net": "in"
+    },
+    {
+      "refdes": "P2",
+      "kind": "V",
+      "net": "out"
+    }
+  ],
+  "simulation": {
+    "analysis": "transient",
+    "start": 0.0,
+    "stop": 0.006,
+    "step": null,
+    "sample_rate": 200000.0
+  }
+}
