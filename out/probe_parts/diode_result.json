@@ -1,0 +1,16 @@
+{
+  "ms14": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\probe_parts\\diode_halfwave.ms14",
+  "status": null,
+  "n": 10000,
+  "outputs": [
+    "V(探针2)"
+  ],
+  "summary": {
+    "V(探针2)": {
+      "min": -0.0019035286250775195,
+      "max": 4.375059467369716,
+      "mean": 1.3060634061404288,
+      "n": 10000
+    }
+  }
+}
