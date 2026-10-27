@@ -1,0 +1,76 @@
+{
+  "circuit_id": "c-414185f41d",
+  "sim_id": "s-0f5969fa10",
+  "calls": [
+    {
+      "tool": "create_circuit",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "simulate",
+      "ok": true,
+      "elapsed": 23.39
+    },
+    {
+      "tool": "measure",
+      "ok": true,
+      "elapsed": 0.28
+    },
+    {
+      "tool": "get_waveform",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "get_circuit",
+      "ok": true,
+      "elapsed": 0.21
+    }
+  ]
+}

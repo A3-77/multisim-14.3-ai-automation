@@ -39,20 +39,76 @@
     IR 本身不跑仿真。仿真设置由 tools/nl_run.py 读取后交给验证脚本执行。
 """
 import json
+import os
 import re
+import sys
 from dataclasses import dataclass, field, asdict
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 IR_VERSION = 1
 
-# IR 层目前**已验证**的元件白名单。
-# 加新元件必须先在 Multisim 里跑通仿真，不要凭"样例里有"就加进来。
-SUPPORTED = {
+# ---------------------------------------------------------------------------
+# 元件白名单
+#
+# 分成两段，界线是"谁保证它是对的"：
+#
+#   LEGACY_SUPPORTED  手写的 5 条。v0.1~v0.8 用真机仿真逐个验过，坐标、引脚、
+#                     别名都是人写的常量。**这一段不许改** —— 改了就等于动了
+#                     已验收的行为。
+#
+#   REGISTRY_SUPPORTED  v0.9 起从 registry/components.json 读。引脚名、引脚几何、
+#                     SPICE 模板、donor 来源全部由 tools/build_registry.py 从
+#                     真实 .ms14 里抽出来，不是手抄的。
+#
+# 关键区别：registry 里有 192 种元件，但**只有 `enabled` 列表里的才进
+# REGISTRY_SUPPORTED**。"扫到过"和"已支持"是两件事，别混。
+# ---------------------------------------------------------------------------
+LEGACY_SUPPORTED = {
     ("SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE"): {"pins": ("1", "2"), "aliases": {"+": "1", "-": "2"}},
     ("POWER_SOURCES", "DC_POWER"): {"pins": ("1", "2"), "aliases": {"+": "1", "-": "2"}},
     ("RESISTOR", "RESISTOR_VIRTUAL"): {"pins": ("1", "2"), "aliases": {}},
     ("CAPACITOR", "CAPACITOR_VIRTUAL"): {"pins": ("1", "2"), "aliases": {}},
     ("POWER_SOURCES", "GROUND"): {"pins": ("1",), "aliases": {}},
 }
+
+REGISTRY_SUPPORTED = {}
+REGISTRY_LOAD_ERROR = None
+
+
+def _load_registry_specs():
+    """把 registry 里 enabled 的元件并进白名单。
+
+    失败不抛错（否则一个坏 JSON 会让整个 IR 层不可用），但把原因记在
+    REGISTRY_LOAD_ERROR 里 —— `tools/test_diode.py` 会断言它是 None。
+    """
+    global REGISTRY_LOAD_ERROR
+    try:
+        import registry as reg
+        for fam, part in reg.enabled():
+            key = (fam, part)
+            if key in LEGACY_SUPPORTED:
+                # 手写条目优先。已经在 registry 里又被人 enable 一次，说明
+                # 有人想覆盖 —— 这是危险的，直接忽略并留个记号。
+                REGISTRY_LOAD_ERROR = (
+                    "%s/%s 同时存在于手写白名单和 registry.enabled，"
+                    "已忽略 registry 版本" % key)
+                continue
+            spec = reg.ir_spec(fam, part)
+            if spec is None:
+                REGISTRY_LOAD_ERROR = "%s/%s 在 enabled 里但读不出 spec" % key
+                continue
+            REGISTRY_SUPPORTED[key] = spec
+    except Exception as e:                      # pragma: no cover
+        REGISTRY_LOAD_ERROR = "%s: %s" % (type(e).__name__, e)
+
+
+_load_registry_specs()
+
+SUPPORTED = dict(LEGACY_SUPPORTED)
+SUPPORTED.update(REGISTRY_SUPPORTED)
 
 ANALYSES = ("transient", "dc")
 

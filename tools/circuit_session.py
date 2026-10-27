@@ -75,8 +75,13 @@ _CID_RE = re.compile(r"^c-[0-9a-f]{10}$")
 #
 # 键是 IR 的 (family, part)，值是**给 Agent 看的**参数名 —— 不是 Multisim 的
 # 参数序号。`param` 字段才是落到 IR.params 里的键，只有本模块知道。
+#
+# v0.9 起分两段（与 circuit_ir 的白名单同构）：
+#   LEGACY_PART_META    手写的 5 条，语义名/单位/分析类型都是人定的
+#   REGISTRY_PART_META  从 registry/components.json 派生 —— 引脚、前缀来自 donor，
+#                       "有没有可设的值"由参数槽数量推出来
 # ---------------------------------------------------------------------------
-PART_META = {
+LEGACY_PART_META = {
     ("SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE"): {
         "pins": ("1", "2"), "aliases": {"+": "1", "-": "2"},
         "prefix": "V",
@@ -113,6 +118,52 @@ PART_META = {
         "analyses": None,
     },
 }
+
+# registry 派生的条目（v0.9 起）
+REGISTRY_PART_META = {}
+REGISTRY_PART_SPEC = {}          # 原始 registry 条目，给 MCP schema 写说明用
+REGISTRY_TOTAL_PARTS = 0         # donor 池里一共扫到多少种（只用于报错文案）
+
+# 参数槽数 > 0 但没人为它声明语义名的元件：不猜，直接不给 value。
+# 想给它可设的值，就在 LEGACY_PART_META 里手写一条（那才是"声明"，不是"推导"）。
+_UNMAPPED_VALUE = "registry 里这类元件的参数槽还没有语义名，本版不接受 value"
+
+
+def _load_registry_parts():
+    global REGISTRY_TOTAL_PARTS
+    try:
+        import registry as reg
+    except Exception:                       # pragma: no cover
+        return
+    REGISTRY_TOTAL_PARTS = len(reg.all_keys())
+    for fam, part in reg.enabled():
+        key = (fam, part)
+        if key in LEGACY_PART_META:
+            continue                        # 手写优先，不覆盖已验收的行为
+        e = reg.spec(fam, part)
+        if not e or not e.get("pins"):
+            continue
+        REGISTRY_PART_SPEC[key] = e
+        REGISTRY_PART_META[key] = {
+            "pins": tuple(e["pins"]),
+            # 只用 donor 里的真实引脚名，不做别名 —— 少一层可以写错的地方。
+            "aliases": {},
+            "prefix": e.get("refdes_prefix") or (fam[:1].upper() or "X"),
+            # 二极管这类元件的参数槽是 0 个（型号决定一切），所以 value=None
+            # 恰好是对的。槽数 > 0 的元件，本版一律不接受 value（不猜语义）。
+            "value": None,
+            "extra": {},
+            # 不是电源，所以不参与分析类型判定。将来 enable 电源型号时，
+            # 必须在这里显式声明 analyses，不能靠猜。
+            "analyses": None,
+            "unmapped_params": (e.get("n_params") or 0) > 0,
+        }
+
+
+_load_registry_parts()
+
+PART_META = dict(LEGACY_PART_META)
+PART_META.update(REGISTRY_PART_META)
 
 
 # ---------------------------------------------------------------------------
@@ -198,12 +249,17 @@ def _save(cid, ir, meta):
 def _part_meta(family, part):
     m = PART_META.get((family, part))
     if m is None:
+        known = ["%s/%s" % k for k in PART_META]
         raise _err(
             "UNKNOWN_COMPONENT_TYPE",
             "元件类型 %s/%s 不在已验证白名单里" % (family, part),
-            "第一版只开放这些：%s" % ", ".join("%s/%s" % k for k in PART_META),
-            family=family, part=part,
-            supported=["%s/%s" % k for k in PART_META])
+            "第一版只开放这些：%s。"
+            "注意：donor 池里扫到过 %d 种元件，但『扫到过』不等于『已支持』—— "
+            "只有 registry/components.json 的 enabled 列表里、并且走过五步验证的"
+            "才会被接受。要加新元件，先跑 tools/build_registry.py 看有没有 donor，"
+            "再按 docs/v0.9-diode.md 的五步验证走一遍。"
+            % (", ".join(known), REGISTRY_TOTAL_PARTS or 0),
+            family=family, part=part, supported=known)
     return m
 
 
@@ -1195,11 +1251,171 @@ def _pair_probes(chans, order, topo, ir):
     return single, single, "single"
 
 
+def _measure_rectifier(topo, topo_obj, chans, data):
+    """半波整流的读数（v0.9）。
+
+    为什么不能沿用正弦拟合
+    ----------------------
+    `fit_channels()` 假设通道是**单一正弦**。半波整流后的波形是
+    "半周期正弦 + 半周期零"，对它做正弦最小二乘会得到一个既不是峰值也不是
+    均值的中间数 —— 那个数字看起来像模像样，但没有任何物理意义，
+    比报错更危险（v0.8 已经栽过一次同类问题）。
+
+    这里改用整流电路真正有意义的量：
+        v_out_peak   输出峰值
+        v_out_min    输出最小值（反向截止时应该 ≈ 0）
+        v_out_mean   输出直流分量（半波整流最经典的指标）
+        vf_deep_on   深导通区的逐点压降（真实的二极管压降是不是常数）
+        conduction   导通占比
+
+    理论值为什么给"区间"而不是一个数
+    --------------------------------
+    第一版这里写了 `Vdc = Vm/π - Vf/2`，拿实测去比，结果差了 2.0%；
+    导通占比差了 2.9 个百分点。查了波形才明白：**恒定压降假设只在深导通区成立**。
+    实测（5V/1kHz 量级，1N4007G，负载 1k）：
+
+        v_in > 0.8Vm   Vf = 0.6200 ± 0.0036 V     ← 确实是常数
+        0.3Vm~0.8Vm    Vf 从 0.61 滑到 0.55       ← 指数段
+        刚开启          Vf 低到 0.13 V            ← 开启点远低于饱和压降
+
+    所以导通比恒定压降模型预测的更早开始，直流分量也就比它算的高一点。
+    这不是电路错了，是**模型太粗**。正确做法是给区间：
+
+        Vdc    ∈ (Vm/π - Vf/2, Vm/π)       恒定压降是下界，理想二极管是上界
+        导通占比 ∈ (恒定压降模型, 0.5)      同理
+
+    实测必须落在区间内，并且 `pos` 告诉你它偏向哪一端 —— 这才是有信息的校验。
+    把实测硬塞进一个粗糙模型的点值上，只会得出"模型不准"这个结论。
+    """
+    src = topo["src"]
+    vm = float(src.value or 0.0) if src else 0.0
+    freq = float((src.params or {}).get(5) or 0.0) if src else 0.0
+    if vm <= 0:
+        raise _err("MISSING_PARAMETER", "源没有幅值，算不出整流理论值",
+                   "AC_VOLTAGE 需要 value（幅值 V）。")
+
+    # 输出通道 = 拓扑里的 out_net（二极管之后、负载之前）
+    out_pid = None
+    for pid, ch in chans.items():
+        if ch.get("net") == topo_obj.out_net:
+            out_pid = pid
+            break
+    if out_pid is None and len(chans) == 1:
+        out_pid = next(iter(chans))
+    if out_pid is None:
+        raise _err("PROBE_NOT_ON_OUTPUT",
+                   "没有探针落在整流输出网络 %r 上" % topo_obj.out_net,
+                   "在 %r 上加一个探针（就是二极管阴极和负载电阻之间那根线）。"
+                   % topo_obj.out_net,
+                   out_net=topo_obj.out_net,
+                   probes={p: c.get("net") for p, c in chans.items()})
+
+    v = data[chans[out_pid]["output"]]
+    v_peak = max(v)
+    v_min = min(v)
+    v_dc = sum(v) / len(v)
+
+    # 输入峰值（有探针就报，没有就退回源声明的幅值）
+    v_in_peak = None
+    in_pid = None
+    v_in = None
+    for pid, ch in chans.items():
+        if ch.get("net") == topo["v_in_net"]:
+            in_pid = pid
+            v_in = data[ch["output"]]
+            v_in_peak = max(v_in)
+            break
+    if v_in_peak is None:
+        v_in_peak = vm
+
+    vf_peak = max(0.0, v_in_peak - v_peak)
+
+    # 深导通区的逐点压降：验证"压降是不是真的接近常数"
+    vf_deep = None
+    if v_in is not None and len(v_in) == len(v):
+        seg = [a - b for a, b in zip(v_in, v) if a >= 0.8 * v_in_peak]
+        if len(seg) >= 20:
+            mean = sum(seg) / len(seg)
+            var = sum((x - mean) ** 2 for x in seg) / len(seg)
+            vf_deep = {"n": len(seg), "mean": mean, "std": math.sqrt(var),
+                       "min": min(seg), "max": max(seg),
+                       "window": "v_in >= 0.8 * Vm"}
+
+    # 反偏区：输出应该被完全挡住
+    rev_max = None
+    if v_in is not None and len(v_in) == len(v):
+        off = [b for a, b in zip(v_in, v) if a <= -0.1 * v_in_peak]
+        if off:
+            rev_max = max(abs(x) for x in off)
+
+    # ---- 区间而不是点值（理由见 docstring）----
+    thr = 0.01 * v_peak
+    frac_meas = sum(1 for x in v if x > thr) / float(len(v))
+    v_dc_lo = v_in_peak / math.pi - vf_peak / 2.0      # 恒定压降模型（下界）
+    v_dc_hi = v_in_peak / math.pi                      # 理想二极管（上界）
+    frac_lo = None
+    arg = (vf_peak + thr) / v_in_peak if v_in_peak else None
+    if arg is not None and 0.0 <= arg < 1.0:
+        frac_lo = (math.pi - 2.0 * math.asin(arg)) / (2.0 * math.pi)
+
+    def pos(meas, lo, hi):
+        if lo is None or hi is None or hi == lo:
+            return None
+        return (meas - lo) / (hi - lo)
+
+    theory = {
+        "kind": "halfwave_rectifier",
+        "v_in_peak": v_in_peak,
+        "vf_at_peak": vf_peak,
+        "v_dc_constant_vf": v_dc_lo,
+        "v_dc_ideal_diode": v_dc_hi,
+        "conduction_frac_constant_vf": frac_lo,
+        "conduction_frac_ideal_diode": 0.5,
+        "conduction_threshold": thr,
+        "freq": freq,
+        "note": ("恒定压降模型只在深导通区成立；开启点远低于饱和压降，"
+                 "所以实测直流分量与导通占比都落在 [恒定压降, 理想二极管] 区间内、"
+                 "且偏向理想端。用 vf_deep_on 核对压降是不是常数。"),
+    }
+
+    return {
+        "mode": "rectifier",
+        "kind": topo_obj.kind,
+        "out_probe": out_pid,
+        "in_probe": in_pid,
+        "v_out_peak": v_peak,
+        "v_out_min": v_min,
+        "v_out_mean": v_dc,
+        "vf_peak": vf_peak,
+        "vf_deep_on": vf_deep,
+        "reverse_block_max": rev_max,
+        "conduction_frac": frac_meas,
+        "source_amp": vm,
+        "source_freq": freq,
+        "theory": theory,
+        "bracket": {
+            "v_dc": {"lo": v_dc_lo, "hi": v_dc_hi, "measured": v_dc,
+                     "inside": bool(v_dc_lo <= v_dc <= v_dc_hi),
+                     "pos": pos(v_dc, v_dc_lo, v_dc_hi)},
+            "conduction_frac": {"lo": frac_lo, "hi": 0.5, "measured": frac_meas,
+                                "inside": (frac_lo is None
+                                           or frac_lo <= frac_meas <= 0.5),
+                                "pos": pos(frac_meas, frac_lo, 0.5)},
+        },
+    }
+
+
 def measure(sim_id, what="all", probe_id=None):
     rec = _load_sim(sim_id)
     ir = irmod.CircuitIR.load(os.path.join(ROOT, rec["ir_snapshot"]))
     names, t, data = _read_waveform(rec)
     topo = _topology(ir)
+    # 拓扑判断只用于"该用哪套读数逻辑"，失败不影响后面（measure 不该因为
+    # 拓扑说不清就整体报错，通道统计本身总是有效的）
+    try:
+        topo_obj = layoutmod.analyze(ir)
+    except Exception:
+        topo_obj = None
 
     # 通道一律以 probe_id 为键；output 只是旁证字段
     chans = {}
@@ -1261,6 +1477,15 @@ def measure(sim_id, what="all", probe_id=None):
 
         th = _ir_sim().theory_dc(ir)
         out["theory"] = th
+    elif topo_obj is not None and topo_obj.kind == "halfwave_rectifier":
+        # ---------- 半波整流：不做正弦拟合 ----------
+        out.update(_measure_rectifier(topo, topo_obj, chans, data))
+        out["notes"].append(
+            "半波整流不走正弦拟合：整流后的波形是「半周期正弦 + 半周期零」，"
+            "拟合出的 amp 既不是峰值也不是均值，没有物理意义。"
+            "这里给 v_out_peak / v_out_mean / vf_deep_on / conduction_frac，"
+            "理论值给的是 [恒定压降, 理想二极管] 区间（bracket），不是点值 —— "
+            "恒定压降假设只在深导通区成立。")
     else:
         # ---------- 瞬态：复用 ir_sim 的最小二乘拟合 ----------
         isim = _ir_sim()

@@ -42,6 +42,11 @@
     bypass          1 串联 + 1 到地(电容)         一阶 RC 低通
     tee             2 串联 + 1 到地(电阻，中间级)  T 型网络
     ladder          其它（≥2 串联，≥1 到地）      二阶 RC 梯形
+    halfwave_rectifier  1 二极管串联 + 1 电阻到地  半波整流（v0.9 新增）
+
+`halfwave_rectifier` 是唯一走 `KIND_TEMPLATES` 模板表的拓扑，也是唯一带
+**准入闸门**的拓扑（`_check_diode_topology`）：其余 6 类只要结构对上就放行，
+二极管则必须精确匹配那一种接法。原因见该函数的 docstring。
 
 明确拒绝（不是"排不出来"，是"这类拓扑还没验过"）：
 
@@ -75,6 +80,28 @@ DX = 240.0
 Y_MAIN = 300.0
 Y_SHUNT = 460.0
 Y_GND = 620.0
+
+
+# ---------------------------------------------------------------------------
+# 模板表（v0.9 新增）
+#
+# **只有半波整流这一条走模板表，其余 6 类仍然走 plan() 里的通用规则。**
+# 这么做不是为了"通用"，恰恰是为了不通用：v0.1~v0.8 验证过的 6 类拓扑坐标
+# 一个字节都不许变（改了就等于动了已验收的行为），而新拓扑需要一块能单独
+# 描述、单独测试、单独演进的地方。
+#
+# 偏移量是相对本级列的：(DX 的比例, Y 偏移)。
+# ---------------------------------------------------------------------------
+KIND_TEMPLATES = {
+    "halfwave_rectifier": {
+        "series_offset": (0.5, 0.0),     # 二极管放在"本级 -> 下一级"的中间
+        "shunt_offset": (0.0, 0.0),      # 负载电阻挂在本级正下方
+        "note": ("V1 -> D1 -> R1 -> GND。几何沿用已验收的 bypass/divider 两端口"
+                 "排布：串联位在行上，到地位在下一列正下方。"
+                 "二极管 donor 是竖直符号（A 在下、K 在上），导线会从上下两端"
+                 "进出 —— 坐标不影响连通性（见文件头），只影响观感。"),
+    },
+}
 
 
 def _col_x(index):
@@ -237,6 +264,14 @@ def _source_pins(comp):
 
 def _is_resistor(comp):
     return comp is not None and comp.family == "RESISTOR"
+
+
+def _is_diode(comp):
+    return comp is not None and comp.family == "DIODE"
+
+
+def _is_capacitor(comp):
+    return comp is not None and comp.family == "CAPACITOR"
 
 
 def _unsupported(reason, message, hint, **context):
@@ -403,9 +438,68 @@ def analyze(ir):
             "同上：不是做不到，是没验过。", limit=MAX_SHUNTS)
 
     kind = _classify(ir, stages)
+    if _diode_refs(ir):
+        _check_diode_topology(ir, stages, kind)
     return Topology(kind=kind, source=src.refdes, ground=gnd.refdes,
                     in_net=in_net, gnd_net=gnd_net, stages=stages,
                     out_net=stages[-1].net)
+
+
+def _diode_refs(ir):
+    return [c.refdes for c in ir.components if c.family == "DIODE"]
+
+
+def _check_diode_topology(ir, stages, kind):
+    """二极管的准入闸门（v0.9）。
+
+    二极管在 donor 里是**竖直符号**（A 在下、K 在上），和已经验过的电阻/电容
+    朝向不同；而且"整流"这件事没法用正弦拟合去验证（`measure` 会走专门分支）。
+    所以这一版**只放开一种拓扑**：
+
+        V1 -> D1 -> R1 -> GND     （1 个二极管串联 + 1 个电阻到地）
+
+    其余任何带二极管的接法一律明确拒绝，并说清是哪一类还没验过 ——
+    不做"大概能摆"的猜测。这是刻意的：先把一种拓扑做到电气可验证，
+    再谈通用。
+    """
+    ds = _diode_refs(ir)
+    shunts = [s for s in stages if s.shunt]
+    series = [s.series for s in stages if s.series]
+
+    def reject(reason, message, hint):
+        raise _unsupported(reason, message, hint,
+                           diodes=ds,
+                           series=series, shunts=[s.shunt for s in shunts])
+
+    if len(ds) > 1:
+        reject("diode_multiple",
+               "电路里有 %d 个二极管（%s）" % (len(ds), ", ".join(ds)),
+               "v0.9 只验证过单个二极管的半波整流。"
+               "全波整流 / 桥式整流还没验过。")
+
+    if any(_is_capacitor(c) for c in ir.components):
+        reject("diode_with_capacitor",
+               "二极管电路里出现了电容",
+               "v0.9 只验证过纯电阻负载的半波整流。"
+               "电容滤波 / 峰值检波（二极管 + 电容）的波形和取数方式都还没验过，"
+               "先去掉电容再仿真。")
+
+    if kind != "halfwave_rectifier":
+        reject("diode_template_unverified",
+               "带二极管的电路被判定为 %r，不是已验证的半波整流模板" % kind,
+               "v0.9 只放开一种二极管拓扑：V1 -> D1 -> R1 -> GND。"
+               "要求：1 个电源、1 个二极管（串在电源正极之后）、"
+               "1 个电阻到地、1 个 GROUND。")
+
+    if not series or series[0] != ds[0]:
+        reject("diode_not_first_series",
+               "二极管 %s 不在电源正极之后的第一个串联位" % ds[0],
+               "把二极管直接接在电源正极上（D1.A 接源正极，D1.K 接负载）。")
+
+    if len(shunts) != 1 or not _is_resistor(ir.component(shunts[0].shunt)):
+        reject("diode_load_not_resistor",
+               "二极管的负载不是单个电阻到地",
+               "v0.9 只验证过电阻负载。接电容、接电感、接别的子电路都还没验过。")
 
 
 def _classify(ir, stages):
@@ -418,6 +512,13 @@ def _classify(ir, stages):
     if not shunts:
         return "series_chain"
     if n_series == 1 and len(shunts) == 1:
+        # 二极管 + 电阻：半波整流。必须排在 divider 之前判 —— 否则会被
+        # 当成"电阻分压"（因为到地的那个是电阻），名字错了后面全跟着错。
+        # 二极管 + 电容（峰值检波）刻意**不**归到这里：它没验过，
+        # 交给 _check_diode_topology 报 diode_with_capacitor。
+        if (_is_diode(ir.component(stages[0].series))
+                and _is_resistor(ir.component(shunts[0].shunt))):
+            return "halfwave_rectifier"
         comp = ir.component(shunts[0].shunt)
         return "divider" if _is_resistor(comp) else "bypass"
     if (n_series == 2 and len(shunts) == 1
@@ -431,7 +532,16 @@ def _classify(ir, stages):
 # 第二步：坐标布局（不认识电路语义）
 # ---------------------------------------------------------------------------
 def plan(topology):
-    """按拓扑给每个元件一个坐标。返回 {refdes: [x, y]}。"""
+    """按拓扑给每个元件一个坐标。返回 {refdes: [x, y]}。
+
+    有模板的拓扑走模板表；其余（v0.1~v0.8 验证过的 6 类）走下面这段通用规则 ——
+    **两条路径算出来的坐标必须一致时才能合并，现在刻意不合并**，因为通用规则
+    的输出已经被 3 次真机验收固定住了，不能顺手改。
+    """
+    tpl = KIND_TEMPLATES.get(topology.kind)
+    if tpl is not None:
+        return _plan_from_template(topology, tpl)
+
     pos = {topology.source: [X0, Y_MAIN],
            topology.ground: [X0, Y_GND]}
     for st in topology.stages:
@@ -442,6 +552,21 @@ def plan(topology):
         if st.shunt:
             # 并联元件挂在本级正下方，画出来是一段竖线
             pos[st.shunt] = [x, Y_SHUNT]
+    return pos
+
+
+def _plan_from_template(topology, tpl):
+    """按模板表算坐标（v0.9 起新增拓扑走这里）。"""
+    sx, sy = tpl["series_offset"]
+    hx, hy = tpl["shunt_offset"]
+    pos = {topology.source: [X0, Y_MAIN],
+           topology.ground: [X0, Y_GND]}
+    for st in topology.stages:
+        x = _col_x(st.index)
+        if st.series:
+            pos[st.series] = [x + DX * sx, Y_MAIN + sy]
+        if st.shunt:
+            pos[st.shunt] = [x + DX * hx, Y_SHUNT + hy]
     return pos
 
 

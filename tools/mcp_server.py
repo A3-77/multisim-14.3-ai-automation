@@ -62,7 +62,7 @@ except Exception:
 import circuit_session as S     # noqa: E402
 
 SERVER_NAME = "multisim-circuit"
-SERVER_VERSION = "0.8.0"
+SERVER_VERSION = "0.9.0"
 PROTOCOL_VERSION = "2024-11-05"
 
 
@@ -91,6 +91,63 @@ _PROBE_ID = {
     ),
 }
 
+# ---------------------------------------------------------------------------
+# add_component 的元件清单
+#
+# 手写的 5 条写在下面（它们的语义、单位是人定的）；registry 里 enable 的
+# 元件由 S.REGISTRY_PART_SPEC 自动生成 —— 引脚、donor、SPICE 模板都来自
+# 真实 .ms14，不手抄。这样"新增一种元件"就不需要改这段文案，
+# 也就不会出现"文档写了但代码没实现"。
+# ---------------------------------------------------------------------------
+_REGISTRY_NOTES = {
+    ("DIODE", "1N4007G"): (
+        "只支持一种拓扑：V1 -> D1 -> R1 -> GND 的半波整流"
+        "（D1.A 接源正极，D1.K 接负载电阻的一端，电阻另一端接 GND）。"
+        "其它二极管接法会返回 LAYOUT_UNSUPPORTED，context.reason 说明是哪一类没验过。"
+    ),
+}
+
+
+def _registry_part_doc():
+    lines = []
+    for key in S.REGISTRY_PART_META:
+        fam, part = key
+        e = S.REGISTRY_PART_SPEC.get(key) or {}
+        pins = "/".join(e.get("pins") or [])
+        donor = os.path.basename(((e.get("donor") or {}).get("file")) or "?")
+        dref = (e.get("donor") or {}).get("refdes") or "?"
+        bits = ["  family=%s, part=%s" % (fam, part)]
+        bits.append("（引脚 %s，**不接受 value**" % pins)
+        if e.get("spice_template"):
+            bits.append("；SPICE 模板 `%s`" % e["spice_template"])
+        bits.append("；donor %s[%s]）\n" % (donor, dref))
+        line = "".join(bits)
+        note = _REGISTRY_NOTES.get(key)
+        if note:
+            line += "    ⚠️ %s\n" % note
+        lines.append(line)
+    return "".join(lines)
+
+
+_TOOL_DESC_ADD_COMPONENT = (
+    "往电路里加一个元件。只接受已验证过真机仿真的 %d 种（family 和 part 是"
+    "**两个独立字段**，不要把斜杠连写当成一个值）：\n"
+    "  family=SIGNAL_VOLTAGE_SOURCES, part=AC_VOLTAGE"
+    "（正弦源，value=幅值V，parameters={'frequency': Hz}）\n"
+    "  family=POWER_SOURCES, part=DC_POWER（直流源，value=电压V）\n"
+    "  family=RESISTOR, part=RESISTOR_VIRTUAL（value=阻值 Ω）\n"
+    "  family=CAPACITOR, part=CAPACITOR_VIRTUAL（value=容值 F）\n"
+    "  family=POWER_SOURCES, part=GROUND（不需要 value）\n"
+    "%s"
+    "引脚（connect 里用）：AC_VOLTAGE / DC_POWER 是 '1' '2'，"
+    "另有别名 '+'->'1'、'-'->'2'；电阻 / 电容只有 '1' '2'，**没有 +/- 别名**；"
+    "GROUND 只有 '1'；二极管是 'A' 'K'（阳极 / 阴极，**没有别名**）。\n"
+    "不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。\n"
+    "返回的 component 是固定形状：refdes / family / part / value / "
+    "value_name / value_unit / parameters / pins / aliases。"
+    "parameters 的键永远是语义名（frequency），不会是数字序号。"
+) % (len(S.PART_META), _registry_part_doc())
+
 TOOLS = [
     {
         "name": "create_circuit",
@@ -109,23 +166,7 @@ TOOLS = [
     },
     {
         "name": "add_component",
-        "description": (
-            "往电路里加一个元件。只接受已验证过真机仿真的五种（family 和 part 是"
-            "**两个独立字段**，不要把斜杠连写当成一个值）：\n"
-            "  family=SIGNAL_VOLTAGE_SOURCES, part=AC_VOLTAGE"
-            "（正弦源，value=幅值V，parameters={'frequency': Hz}）\n"
-            "  family=POWER_SOURCES, part=DC_POWER（直流源，value=电压V）\n"
-            "  family=RESISTOR, part=RESISTOR_VIRTUAL（value=阻值 Ω）\n"
-            "  family=CAPACITOR, part=CAPACITOR_VIRTUAL（value=容值 F）\n"
-            "  family=POWER_SOURCES, part=GROUND（不需要 value）\n"
-            "引脚（connect 里用）：AC_VOLTAGE / DC_POWER 是 '1' '2'，"
-            "另有别名 '+'->'1'、'-'->'2'；电阻 / 电容只有 '1' '2'，**没有 +/- 别名**；"
-            "GROUND 只有 '1'。\n"
-            "不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。\n"
-            "返回的 component 是固定形状：refdes / family / part / value / "
-            "value_name / value_unit / parameters / pins / aliases。"
-            "parameters 的键永远是语义名（frequency），不会是数字序号。"
-        ),
+        "description": _TOOL_DESC_ADD_COMPONENT,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -284,6 +325,17 @@ TOOLS = [
             "所在网络，输出探针取 topology.out_net；两个都找到时 pairing=\"topology\"。"
             "找不到（比如只有一个探针）时退回 absolute 模式（以源声明的幅值为参考）"
             "并在 pairing / notes 里说明。\n"
+            "**例外：半波整流电路（topology.kind=\"halfwave_rectifier\"）不做正弦"
+            "拟合，也没有 gain / phase_deg。** 整流后的波形不是单一正弦，拟合出的"
+            "幅值没有物理意义。这时 mode=\"rectifier\"，返回：\n"
+            "  v_out_peak / v_out_min / v_out_mean   峰值 / 最小值 / 直流分量\n"
+            "  vf_deep_on                            深导通区逐点压降（mean/std/min/max）\n"
+            "  reverse_block_max                     反偏区输出的绝对值上界（应 ≈ 0）\n"
+            "  conduction_frac                       导通占比\n"
+            "  theory + bracket                      **区间而不是点值**：\n"
+            "      v_dc ∈ [Vm/π - Vf/2, Vm/π]，导通占比 ∈ [恒定压降模型, 0.5]。\n"
+            "      bracket.pos 表示实测偏向哪一端（0 = 恒定压降端，1 = 理想二极管端）。\n"
+            "      恒定压降假设只在深导通区成立，别拿它当点值对账。\n"
             "每通道的 mean 是**全窗算术平均**（含启动暂态，不一定接近 0）；"
             "offset 才是正弦拟合出来的直流分量。两者含义不同，别当成同一件事。\n"
             "channels 是以 **probe_id 为键** 的对象，和 get_waveform 的 channels "

@@ -1,5 +1,49 @@
 # Multisim 14.3 AI 自动化 —— 逆向工程报告
 
+> ## 🔌 v0.9.0（2026-10-27）：Agent 第一次用上二极管 —— DIODE / 1N4007G 完整闭环
+>
+> v0.8.0 的 Agent 只能用 5 种元件，而且这 5 种是**手写死在代码里**的。
+> 加一种元件要改三处：IR 白名单、会话层文案、布局模板。没法规模化。
+>
+> v0.9.0 把"元件信息从哪来"这件事交回给**真实 `.ms14` 文件**：
+>
+> | 层 | 之前 | v0.9.0 |
+> | --- | --- | --- |
+> | ComponentSpec | 手写字面量 | `build_registry.py` 扫 128 个 `.ms14`（corpus 10 + 官方 118），抽出 **192 种**元件的引脚名 / 引脚几何 / SPICE 模板 / donor 来源。**零手写** |
+> | 闸门 | 无（硬编码即白名单） | `registry/components.json` 的 `enabled` 列表。**`parts` 有 192 条 ≠ 支持 192 种** |
+> | 布局 | 单主干 + 到地并联（6 类） | 加 `halfwave_rectifier` 一类；既有 6 类的 `plan()` 代码**一行没动** |
+> | MCP schema | 手写文案 | 从 `PART_META` 自动生成，Agent 看到的就是 registry 里的事实 |
+>
+> 验收方式：`tools/agent_acceptance/run_diode.py`，**每次调用起独立进程，不 import 任何项目模块**，
+> Agent 只靠 `tools/list` 和工具返回走完这条路：
+>
+> ```
+> Agent → add_component(DIODE/1N4007G) → Circuit IR → halfwave_rectifier 布局
+>      → msbuild donor 克隆 → connect → .ms14 → Multisim 14.3.3
+>      → 真实仿真 → measure → 从 CSV 独立复算
+> ```
+>
+> | 项 | 实测 |
+> | --- | --- |
+> | 工具调用 | 14 次，**0 失败**，总耗时 25.9 s |
+> | 探针 | `outputs=['V(探针1)','V(探针2)']` —— **两个都在** |
+> | 输出波形 | 峰值 **4.3696 V**、最小 **−0.00010 V**、直流分量 **1.3051 V** |
+> | 独立复算 | 深导通压降 **0.6200 ± 0.0036 V**（n=2042）、反偏漏电 **1.11 mV** |
+> | 独立复算 vs `measure` | 逐位相同（差 **0.00e+00**） |
+> | 5 种老元件 | 一阶 RC 真机复测 gain **0.4332753354**（v0.8 基线 0.4332753） |
+> | 自动化测试 | `test_diode` **62/62**、`test_mcp_session` 113/113、`test_layout` 51/51 |
+>
+> 顺手挖出**两个被上一轮掩盖的问题**：
+>
+> 1. 上一轮"二极管通过"其实**只注册了一个探针** —— 第二个探针落在二极管阴极（属别人的网络）上。
+>    现在 `_pick_probe_xy()` 检测落点是别人的引脚就换点。
+> 2. 恒定压降模型 `Vdc = Vm/π − Vf/2` **只在深导通区成立**。实测深导通 Vf = 0.620 V，
+>    中等导通 0.589 V，刚开启时低到 0.128 V。理论值因此改成**区间**，并给出 `bracket.pos`。
+>
+> 👉 [完整报告：10 条要求逐条对照 + 实测数据 + NPN 扩展评估](docs/v0.9-diode.md)
+>
+> ---
+>
 > ## 🤖 v0.8.0（2026-10-27）：LLM → MCP → Multisim，让真正的 LLM 自己跑一遍
 >
 > v0.7.0 证明"后端能跑二阶电路"，但跑它的是**脚本**——脚本知道 R 取多少、
@@ -345,6 +389,8 @@
 | [docs/dc-static.md](docs/dc-static.md) | **直流静态电路**：`EnumOutputs` 只能调一次的根因、两条取数路径、复现与排错顺序 |
 | [docs/mcp.md](docs/mcp.md) | **MCP Tool API**：8 个工具的输入输出、状态模型、统一返回对象、错误码、自动布局、验收 |
 | [docs/layout.md](docs/layout.md) | **分支感知布局（P2）**：拓扑判断先于坐标布局、6 类模板、拒绝规则、坐标网格、一次真实的几何 bug |
+| [docs/v0.9-diode.md](docs/v0.9-diode.md) | **v0.9 二极管闭环**：ComponentSpec 注册表、`enabled` 闸门、半波整流模板、真机实测数据、NPN 扩展评估 |
+| [docs/v0.9-component-library-assessment.md](docs/v0.9-component-library-assessment.md) | **14.3.3 升级后元件库复测**：donor 池 32 → 193、二极管/NPN/运放端到端、COM 零元件库接口 |
 | [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
 | [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
 | [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
@@ -781,6 +827,79 @@ v0.7.0 把 `plan_layout()` 换成 `layout.py`，并把两件事分开：
 [docs/layout.md](docs/layout.md)，逐项报告见
 [out/agent_test2/REPORT.md](out/agent_test2/REPORT.md)。
 
+### 3.11 元件注册表 + 二极管半波整流（v0.9.0）
+
+v0.8.0 之前，支持哪些元件是**代码里的字面量**：
+
+```python
+# tools/circuit_ir.py（v0.8.0）
+SUPPORTED = {
+    "VSOURCE/DC":   {"pins": ("+", "-"), ...},
+    "RESISTOR/R":   {"pins": ("1", "2"), ...},
+    ...
+}
+```
+
+v0.9.0 拆成两层，中间隔一个 `enabled` 闸门：
+
+```
+build_registry.py  →  registry/components.json  →  registry.py  →  circuit_ir / circuit_session
+（离线扫 .ms14）        （192 条 parts + enabled）    （运行时，纯 JSON）
+```
+
+```jsonc
+{
+  "enabled": ["DIODE/1N4007G"],        // ← 闸门：Agent 能用的只有这里列的
+  "parts": {
+    "DIODE/1N4007G": {
+      "pins": ["A", "K"],
+      "pin_geometry": {"A": [279, 297], "K": [279, 243]},   // 从 donor 里量出来的
+      "pin_extent": [0, 54],
+      "orientation": "vertical",                           // 二极管符号是竖直的
+      "spice_template": "d%p %tA %tK %m",
+      "refdes_prefix": "D",
+      "donor": {"file": "corpus/samples14/Fuente capacitiva final.ms14",
+                "refdes": "D2", "in_repo": true}
+    }
+  }
+}
+```
+
+**`parts` 里有 192 条，不代表支持 192 种。** `parts` 只说明"donor 存在、引脚抽得出来"。
+真正放开一种元件要做三件事：① `enabled` 加一行；② 布局有模板；③ 有测试。
+这一轮只做了 `DIODE/1N4007G` 一种，只放开一种拓扑：
+
+```
+V1 → D1(A→K) → R1 → GND        半波整流
+```
+
+`layout.analyze()` 里 `halfwave_rectifier` 必须排在 `divider` 之前判（否则会被认成分压器），
+然后 `_check_diode_topology()` 用 5 条理由拒绝其他所有二极管用法：
+
+| 拒绝码 | 什么情况 |
+| --- | --- |
+| `diode_multiple` | 不止一个二极管（桥式、全波都不支持） |
+| `diode_with_capacitor` | 带滤波电容（那是峰值检测，另算） |
+| `diode_template_unverified` | donor 的 SPICE 模板不是 `d%p %tA %tK %m` 形态 |
+| `diode_not_first_series` | 二极管不在第一级串联位 |
+| `diode_load_not_resistor` | 负载不是电阻 |
+
+`measure()` 遇到这个拓扑走 `_measure_rectifier()`，不做正弦拟合，直接给整流该看的量：
+
+```jsonc
+{"mode": "rectifier", "v_out_peak": 4.3696, "v_out_min": -0.00010,
+ "v_out_mean": 1.3051, "vf_deep_on": {"mean": 0.6200, "std": 0.0036, "n": 2042},
+ "reverse_block_max": 0.00111, "conduction_frac": 0.4861,
+ "bracket": {"v_dc": {"lo": 1.2775, "hi": 1.5895, "measured": 1.3051, "inside": true, "pos": 0.089}}}
+```
+
+`bracket` 是这轮被真机数据逼出来的：`Vdc = Vm/π − Vf/2` 这个恒定压降模型
+**只在深导通区成立**，实测导通占比 0.4861 比模型预测的 0.4573 高 2.87 个百分点，
+所以理论值只能给区间，不能给点值。
+
+完整报告（含 10 条要求逐条对照、14 条 trace、独立复算、NPN 扩展评估）见
+[docs/v0.9-diode.md](docs/v0.9-diode.md)。
+
 ---
 
 ## 四、环境依赖
@@ -847,6 +966,9 @@ multisim-ctrl/
 │   ├── dc-static.md           直流静态电路：EnumOutputs 只能调一次的根因
 │   ├── mcp.md                 MCP Tool API：工具表 / 错误码 / 自动布局
 │   ├── layout.md              ★ 分支感知布局（P2）：拓扑模板 / 拒绝规则 / 坐标网格
+│   ├── v0.9-diode.md          ★ v0.9 二极管闭环：注册表 / 闸门 / 真机数据 / NPN 评估
+│   ├── v0.9-component-library-assessment.md  14.3.3 元件库复测（donor 32→193）
+│   ├── agent-acceptance-v0.8.md  v0.8.0 Agent 验收（5 轮 trace + 三个 API 缺陷）
 │   ├── next-steps.md          路线图
 │   ├── api.md                 COM API 全表（旧路线留存）
 │   ├── case/                  ★ Agent Acceptance Test 案例（题目 + 电路图 + 波形图）
@@ -864,10 +986,13 @@ multisim-ctrl/
 │   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
 │   ├── circuit_session.py     ★★ MCP 会话层：句柄 / 语义参数 / 结构化错误
 │   ├── layout.py              ★★ 拓扑分析 + 坐标（analyze 判拓扑、plan 算坐标）
+│   ├── registry.py            ★★ 元件注册表运行时读取层（v0.9；`ir_spec()` 是闸门）
+│   ├── build_registry.py      ★ 离线扫 .ms14 → registry/components.json（v0.9）
 │   ├── mcp_server.py          ★★ MCP Server（JSON-RPC over stdio，8 个工具）
 │   ├── mcp_client.py          ★ MCP 验收客户端（走真实协议，不调 Python 函数）
-│   ├── test_mcp_session.py    ★ 会话层测试：96 项，不需要 Multisim
+│   ├── test_mcp_session.py    ★ 会话层测试：113 项，不需要 Multisim
 │   ├── test_layout.py         ★ 拓扑层测试：51 项，纯逻辑
+│   ├── test_diode.py          ★ 二极管闭环测试：62 项，不需要 Multisim（v0.9）
 │   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
 │   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
 │   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
@@ -896,7 +1021,10 @@ multisim-ctrl/
 │   ├── samples/*.xml.gz       108 个官方样例解压后的明文 XML（gzip，共 7.4 MB）
 │   ├── samples14/*.ms14       ★ 10 个原生 Multisim 14.3 电路（含 555 / 运放 / buck）
 │   └── samples_index.json     每个样例的元件清单 (refdes, family, part)
+├── registry/
+│   └── components.json        ★★ 192 种元件的 ComponentSpec + `enabled` 闸门（v0.9，278 KB）
 ├── out/agent_test/            ★ Agent Acceptance Test 的全部证据（脚本/轨迹/报告）
+├── out/agent_v09/diode/       ★ v0.9 二极管闭环证据（.ms14 / 10000 点 CSV / trace / acceptance）
 ├── out/ref/
 │   ├── blank_circuit.xml      空白电路明文（148367 B，注入基底）
 │   ├── own_blank.ms14         用自研压缩器重打包的空白电路（Multisim 能打开）
@@ -964,9 +1092,29 @@ multisim-ctrl/
 - **坐标不影响网表**：一阶 RC 与直流电路换到新网格后读数与旧网格**逐位一致**
   （`mcp_client` 56 项断言全过）；同时实测到一条边界 ——
   导线横穿别的符号框会让 Multisim 少认一个探针通道（`docs/layout.md` 第 6 节）
+- **元件注册表（v0.9.0）**：`tools/build_registry.py` 扫 128 个 `.ms14` 抽出
+  **192 种**元件的 ComponentSpec（引脚名 / 几何 / SPICE 模板 / donor），零手写；
+  `registry/components.json` 278 KB 入库，`tools/registry.py` 是运行时读取层
+- **二极管半波整流真机闭环（v0.9.0）**：Agent 只靠 `tools/list`，
+  14 次调用 0 失败 / 25.9 s 走完
+  `add_component(DIODE/1N4007G) → IR → 布局 → donor 克隆 → 仿真 → measure`。
+  输出峰值 **4.3696 V**、最小值 **−0.00010 V**、直流分量 **1.3051 V**；
+  独立复算深导通压降 **0.6200 ± 0.0036 V**（n=2042）、反偏漏电 **1.11 mV**；
+  两个探针都在（`outputs=['V(探针1)','V(探针2)']`）（`docs/v0.9-diode.md`）
+- **v0.9.0 零回归**：5 种老元件的 `LEGACY_SUPPORTED` 仍是字面量常量、registry 不覆盖；
+  一阶 RC 真机复测 gain **0.4332753354**（v0.8 基线 0.4332753）、相位 −64.324879°；
+  `test_diode` 62/62、`test_mcp_session` 113/113、`test_layout` 51/51
 
 ### ⬜ 未验证（路线图见 [docs/next-steps.md](docs/next-steps.md)）
 
+- **除 `DIODE/1N4007G` 外的另外 191 种 donor**：只是"目录里有"，
+  `enabled` 没放开、没有布局模板、没有测试。**不要当成已支持**
+- **二极管的其它拓扑**：桥式整流（`diode_multiple`）、带滤波电容（`diode_with_capacitor`）、
+  续流 / 钳位 / 检波 —— 全部明确拒绝
+- **BJT_NPN**：ComponentSpec 层可直接复用（改一行 `enabled`），
+  但 `layout.analyze()` 的 `_two_pin_other()` 对三端元件返回 `None`，
+  整个主干遍历假设建立在两端元件上 —— **layout 层不可复用**，需要单独写
+  `_analyze_three_terminal()`（评估见 `docs/v0.9-diode.md` §5）
 - `RESISTOR_RATED` / `CAPACITOR_RATED`（family `RATED_VIRTUAL`）路线
 - 运放、555 等多引脚元件的通用 `add_part` 支持
 - 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）

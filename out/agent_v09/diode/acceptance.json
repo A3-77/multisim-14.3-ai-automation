@@ -1,0 +1,164 @@
+{
+  "circuit_id": "c-1746e09c52",
+  "sim_id": "s-5943736294",
+  "ms14": "out\\agent_v09\\diode\\halfwave_1n4007g.ms14",
+  "csv": "out\\agent_v09\\diode\\halfwave_1n4007g.csv",
+  "csv_session_copy": "out\\mcp\\sessions\\c-1746e09c52\\sims\\s-5943736294.csv",
+  "calls": [
+    {
+      "tool": "create_circuit",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.27
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.26
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "simulate",
+      "ok": true,
+      "elapsed": 22.92
+    },
+    {
+      "tool": "measure",
+      "ok": true,
+      "elapsed": 0.24
+    },
+    {
+      "tool": "get_waveform",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "get_circuit",
+      "ok": true,
+      "elapsed": 0.21
+    }
+  ],
+  "n_calls": 14,
+  "n_errors": 0,
+  "total_s": 25.9,
+  "timing": {
+    "layout_s": 0.0,
+    "compile_s": 14.979,
+    "run_s": 4.06,
+    "total_s": 19.039
+  },
+  "measure": {
+    "mode": "rectifier",
+    "v_out_peak": 4.36958885,
+    "v_out_min": -0.000104184992,
+    "v_out_mean": 1.3051213953942942,
+    "vf_peak": 0.6240323799999992,
+    "vf_deep_on": {
+      "n": 2042,
+      "mean": 0.6200214960381988,
+      "std": 0.003554629405284067,
+      "min": 0.6118569999999997,
+      "max": 0.6240323799999992,
+      "window": "v_in >= 0.8 * Vm"
+    },
+    "reverse_block_max": 0.001107383,
+    "conduction_frac": 0.4861,
+    "theory": {
+      "kind": "halfwave_rectifier",
+      "v_in_peak": 4.99362123,
+      "vf_at_peak": 0.6240323799999992,
+      "v_dc_constant_vf": 1.277502815366261,
+      "v_dc_ideal_diode": 1.5895190053662607,
+      "conduction_frac_constant_vf": 0.45730892787448574,
+      "conduction_frac_ideal_diode": 0.5,
+      "conduction_threshold": 0.0436958885,
+      "freq": 50.0,
+      "note": "恒定压降模型只在深导通区成立；开启点远低于饱和压降，所以实测直流分量与导通占比都落在 [恒定压降, 理想二极管] 区间内、且偏向理想端。用 vf_deep_on 核对压降是不是常数。"
+    },
+    "bracket": {
+      "v_dc": {
+        "lo": 1.277502815366261,
+        "hi": 1.5895190053662607,
+        "measured": 1.3051213953942942,
+        "inside": true,
+        "pos": 0.08851649662164363
+      },
+      "conduction_frac": {
+        "lo": 0.45730892787448574,
+        "hi": 0.5,
+        "measured": 0.4861,
+        "inside": true,
+        "pos": 0.6744049913027903
+      }
+    }
+  },
+  "recompute": {
+    "n": 10000,
+    "t_range": [
+      0.0,
+      0.09999
+    ],
+    "v_in_peak": 4.99362123,
+    "v_out_peak": 4.36958885,
+    "v_out_min": -0.000104184992,
+    "v_out_mean": 1.3051213953942942,
+    "vf_peak": 0.6240323799999992,
+    "vf_deep_on": {
+      "n": 2042,
+      "mean": 0.6200214960381988,
+      "std": 0.003554629405284067,
+      "min": 0.6118569999999997,
+      "max": 0.6240323799999992
+    },
+    "reverse_block_max": 0.001107383,
+    "v_dc_lo": 1.277502815366261,
+    "v_dc_hi": 1.5895190053662607,
+    "v_dc_inside": true,
+    "v_dc_pos": 0.08851649662164363,
+    "conduction_meas": 0.4861,
+    "conduction_lo": 0.45730892787448574,
+    "conduction_hi": 0.5,
+    "conduction_inside": true,
+    "conduction_pos": 0.6744049913027903
+  },
+  "fails": [],
+  "pass": true
+}

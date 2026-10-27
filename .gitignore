@@ -59,6 +59,24 @@ out/agent_test/*.ms14
 !out/agent_v08/**
 out/agent_v08/**/*.ms14
 
+# 14.3.3 升级后能力复测（docs/v0.9-component-library-assessment.md 直接引用）
+# trace / summary / 各元件的电气结果入库；.ms14 可用 tools/_probe_*.py 重跑生成，不入库
+!out/agent_v083/
+!out/agent_v083/**
+out/agent_v083/**/*.ms14
+!out/probe_parts/
+!out/probe_parts/*.json
+!out/probe_parts/*.jsonl
+!out/probe_parts/*.log
+out/probe_parts/*.ms14
+
+# v0.9 二极管闭环（docs/v0.9-diode.md 直接引用）
+# trace / acceptance.json / 波形 CSV / 验收电路 .ms14 全部入库（32 KB，要能直接打开验证）
+# 只有 server.log 是运行产物
+!out/agent_v09/
+!out/agent_v09/**
+out/agent_v09/**/server.log
+
 # 32 位运行时（体积大，可用 run.bat / setup_env.py 重建）
 runtime/
 
