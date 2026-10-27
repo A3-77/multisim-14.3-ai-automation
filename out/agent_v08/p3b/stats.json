@@ -1,0 +1,41 @@
+{
+  "calls": 16,
+  "ok": 15,
+  "errors": 1,
+  "error_codes": {
+    "PROBE_NOT_FOUND": 1
+  },
+  "per_tool": {
+    "create_circuit": 1,
+    "add_component": 4,
+    "connect": 3,
+    "add_probe": 2,
+    "simulate": 2,
+    "get_waveform": 2,
+    "measure": 2
+  },
+  "consecutive_duplicates": 0,
+  "total_elapsed_s": 39.8,
+  "slowest": {
+    "tool": "simulate",
+    "elapsed_ms": 20102.4
+  },
+  "sequence": [
+    "create_circuit",
+    "add_component",
+    "add_component",
+    "add_component",
+    "add_component",
+    "connect",
+    "connect",
+    "connect",
+    "add_probe",
+    "add_probe",
+    "simulate",
+    "get_waveform",
+    "get_waveform",
+    "measure",
+    "simulate",
+    "measure"
+  ]
+}

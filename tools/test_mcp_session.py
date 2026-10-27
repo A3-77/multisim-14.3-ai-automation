@@ -480,6 +480,103 @@ def main():
         expect_err("timeout <= 0",
                    lambda: S.simulate(cid, timeout=0), "BAD_ARGUMENT")
 
+        # ---------------------------------------------------------------- 15
+        print("\n[15] v0.8.0：gain 的方向由拓扑决定，不由探针顺序决定")
+        c2 = S.create_circuit("pairing")
+        cid2 = c2["circuit_id"]
+        S.add_component(cid2, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                        value=1.0, frequency=1000.0)
+        S.add_component(cid2, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(cid2, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=100e-9)
+        S.add_component(cid2, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(cid2, [["V1", "+"], ["R1", "1"]], net="in")
+        S.connect(cid2, [["R1", "2"], ["C1", "1"]], net="out")
+        S.connect(cid2, [["C1", "2"], ["V1", "-"], ["GND1", "1"]], net="0")
+        # **先加输出探针、后加输入探针** —— v0.7.0 在这个顺序下会把 gain 算反
+        S.add_probe(cid2, "out", name="P_out")
+        S.add_probe(cid2, "in", name="P_in")
+
+        ir2, _meta2 = S._load(cid2)
+        topo2 = S._topology(ir2)
+        chans2 = {"P_out": {"net": "out", "amp": 0.5},
+                  "P_in": {"net": "in", "amp": 1.0}}
+        i_pid, o_pid, how = S._pair_probes(chans2, ["P_out", "P_in"], topo2, ir2)
+        check("按拓扑配对（不看添加顺序）", how == "topology", how)
+        check("输入 = 源正极网络上的探针", i_pid == "P_in", str(i_pid))
+        check("输出 = topology.out_net 上的探针", o_pid == "P_out", str(o_pid))
+
+        i2, o2, how2 = S._pair_probes(chans2, ["P_in", "P_out"], topo2, ir2)
+        check("把添加顺序倒过来，结论不变",
+              (i2, o2, how2) == ("P_in", "P_out", "topology"),
+              "%s / %s / %s" % (i2, o2, how2))
+
+        _i3, _o3, how3 = S._pair_probes({"P_out": chans2["P_out"]},
+                                        ["P_out"], topo2, ir2)
+        check("只有一个探针时退回 single", how3 == "single", how3)
+
+        chans_bad = {"P_a": {"net": "x"}, "P_b": {"net": "y"}}
+        _i4, _o4, how4 = S._pair_probes(chans_bad, ["P_a", "P_b"], topo2, ir2)
+        check("拓扑判断不出时退回 probe_order（并会在 notes 里说明）",
+              how4 == "probe_order", how4)
+
+        # ---------------------------------------------------------------- 16
+        print("\n[16] v0.8.0：topology 的 supported 与 complete 是两件事")
+        c3 = S.create_circuit("incomplete")
+        cid3 = c3["circuit_id"]
+        S.add_component(cid3, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                        value=1.0, frequency=1000.0)
+        S.add_component(cid3, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(cid3, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=100e-9)
+        S.add_component(cid3, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(cid3, [["V1", "+"], ["R1", "1"]], net="in")
+        S.connect(cid3, [["R1", "2"], ["C1", "1"]], net="out")
+        S.connect(cid3, [["V1", "-"], ["GND1", "1"]], net="0")   # C1.2 还悬空
+        t3 = S.get_circuit(cid3)["topology"]
+        check("有引脚悬空时布局不认（supported=false）",
+              t3.get("supported") is False, str(t3))
+        check("电路没接完（complete=false）", t3.get("complete") is False, str(t3))
+        check("issues 点名悬空的引脚",
+              any("C1.2" in s for s in (t3.get("issues") or [])),
+              str(t3.get("issues")))
+
+        # 接完线之后：拓扑认了，但没探针仍然算没就绪
+        S.connect(cid3, [["C1", "2"], ["V1", "-"], ["GND1", "1"]], net="0")
+        t4 = S.get_circuit(cid3)["topology"]
+        check("接完线后 supported=true", t4.get("supported") is True, str(t4))
+        check("没有探针时 complete 仍为 false", t4.get("complete") is False, str(t4))
+        S.add_probe(cid3, "out", name="P1")
+        t5 = S.get_circuit(cid3)["topology"]
+        check("有探针后 complete=true", t5.get("complete") is True, str(t5))
+
+        # 能力边界 vs 接线问题：parallel_shunt 是"接完了但不会摆"
+        c4 = S.create_circuit("par")
+        cid4 = c4["circuit_id"]
+        S.add_component(cid4, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                        value=1.0, frequency=1000.0)
+        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=10000.0)
+        S.add_component(cid4, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=10e-9)
+        S.add_component(cid4, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(cid4, [["V1", "+"], ["R1", "1"]], net="in")
+        S.connect(cid4, [["R1", "2"], ["R2", "1"], ["C1", "1"]], net="out")
+        S.connect(cid4, [["R2", "2"], ["C1", "2"], ["V1", "-"], ["GND1", "1"]],
+                 net="0")
+        S.add_probe(cid4, "out", name="P1")
+        t6 = S.get_circuit(cid4)["topology"]
+        check("parallel_shunt：supported=false",
+              t6.get("supported") is False, str(t6))
+        check("parallel_shunt：但 complete=true（电路是接完的）",
+              t6.get("complete") is True, str(t6))
+        check("reason 指出是哪一类拓扑问题",
+              t6.get("reason") == "parallel_shunt", str(t6.get("reason")))
+
+        # ---------------------------------------------------------------- 17
+        print("\n[17] v0.8.0：simulate 的 start / stop 校验（不真的跑 COM）")
+        expect_err("start 为负", lambda: S.simulate(cid, start=-1e-3),
+                   "BAD_ARGUMENT")
+        expect_err("start >= stop", lambda: S.simulate(cid, start=5e-3, stop=1e-3),
+                   "BAD_ARGUMENT", "必须小于")
+
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

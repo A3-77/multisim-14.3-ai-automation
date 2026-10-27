@@ -1,0 +1,92 @@
+{
+  "ok": true,
+  "sim_id": "s-29160bf3e9",
+  "checks": {
+    "files": {
+      "ms14": {
+        "path": "out\\mcp\\sessions\\c-44ba97b68d\\rc2_lpf_2k.ms14",
+        "exists": true,
+        "bytes": 38054
+      },
+      "waveform_csv": {
+        "path": "out\\mcp\\sessions\\c-44ba97b68d\\sims\\s-29160bf3e9.csv",
+        "exists": true,
+        "bytes": 54969
+      },
+      "sim_record": {
+        "path": "out\\mcp\\sessions\\c-44ba97b68d\\sims\\s-29160bf3e9.json"
+      }
+    },
+    "csv": {
+      "rows": 1600,
+      "columns": [
+        "V(探针1)",
+        "V(探针2)"
+      ],
+      "t_range": [
+        0.0,
+        0.007995
+      ]
+    },
+    "recompute": {
+      "source_freq": 1000.0,
+      "skip_ratio": 0.4,
+      "worst_amp_rel": 0.0,
+      "worst_phase_deg": 0.0,
+      "consistent": true
+    },
+    "sim_record": {
+      "analysis": "transient",
+      "state": "0",
+      "n": 1600,
+      "outputs": [
+        "V(探针1)",
+        "V(探针2)"
+      ],
+      "timing": {
+        "layout_s": 0.016,
+        "compile_s": 18.023,
+        "run_s": 5.683,
+        "total_s": 23.722
+      },
+      "topology_kind": "ladder"
+    }
+  },
+  "channels": {
+    "P_out": {
+      "output": "V(探针1)",
+      "csv_fit": {
+        "amp": 0.9027405784175971,
+        "phase_deg": -34.29482065076583,
+        "offset": -3.8004749094520172e-06
+      },
+      "measure": {
+        "amp": 0.9027405784175971,
+        "phase_deg": -34.29482065076583
+      },
+      "diff": {
+        "amp_abs": 0.0,
+        "amp_rel": 0.0,
+        "phase_deg": 0.0
+      }
+    },
+    "P_in": {
+      "output": "V(探针2)",
+      "csv_fit": {
+        "amp": 0.996790906081543,
+        "phase_deg": -8.363771313373934e-05,
+        "offset": -1.5347350356811647e-06
+      },
+      "measure": {
+        "amp": 0.996790906081543,
+        "phase_deg": -8.363771313373934e-05
+      },
+      "diff": {
+        "amp_abs": 0.0,
+        "amp_rel": 0.0,
+        "phase_deg": 0.0
+      }
+    }
+  },
+  "circuit_id": "c-44ba97b68d"
+}

@@ -363,21 +363,63 @@ def _latest_outputs(cid, meta):
     return out
 
 
+def _missing_wiring(ir):
+    """列出"元件的引脚还没接到任何网络"的情况。
+
+    只做结构检查，不看仿真参数 —— `ir.validate()` 里那条
+    "simulation.stop 必须大于 0" 对"还没仿真过"的电路是噪音，
+    放在这里会把每个新电路都判成"没接完"。
+    """
+    out = []
+    for c in ir.components:
+        for p in _real_pins(c):
+            if _net_of_pin(ir, c.refdes, p) is None:
+                out.append("%s.%s 还没接线" % (c.refdes, p))
+    return out
+
+
 def _topology_brief(ir):
     """给状态快照用的拓扑摘要。**永不抛错** —— 电路还没搭完是正常状态。
 
     `simulate` 用的是严格版本（`plan_layout(..., want_topology=True)`）：
     拓扑不成立就拒绝仿真。这里只回答"我现在搭成什么样了"，所以拓扑不成立
     时把原因一起返回，让 Agent 知道还差什么。
+
+    v0.8.0 起 `supported` 和 `complete` 是两个**互相独立**的判断：
+
+        supported  这种拓扑布局引擎认不认（不认时 reason 说明是哪一类）
+        complete   线接完了没有（没接完时 issues 点名哪个引脚）
+
+    分开的理由来自 v0.8.0 验收：`LAYOUT_UNSUPPORTED` 有两种完全不同的含义 ——
+    "电路本身没问题，是后端不会摆"（complete=true）和"你还有引脚悬空"
+    （complete=false）。以前只有 supported 一个字段，Agent 分不清该改电路
+    还是该换拓扑。
     """
     try:
         t = layoutmod.analyze(ir)
     except layoutmod.LayoutError as e:
-        return {"kind": None, "supported": False,
-                "reason": e.context.get("reason") or e.code,
-                "message": e.message, "hint": e.hint}
-    d = t.to_dict()
-    d["supported"] = True
+        d = {"kind": None, "supported": False,
+             "reason": e.context.get("reason") or e.code,
+             "message": e.message, "hint": e.hint}
+    else:
+        d = t.to_dict()
+        d["supported"] = True
+
+    missing = _missing_wiring(ir)
+    has_src = _find_source(ir) is not None
+    has_gnd = any(c.part == "GROUND" for c in ir.components)
+    # complete 只看"电路本身是否搭完"，**不看布局认不认**：
+    # parallel_shunt 那种"接完了但后端不会摆"的情况，complete 必须是 true，
+    # 否则 Agent 又会把能力边界当成自己接错线。
+    d["complete"] = bool(not missing and ir.probes and has_src and has_gnd)
+    if missing:
+        d["issues"] = missing[:5]
+    elif not ir.probes:
+        d["issues"] = ["还没有探针（simulate 需要至少一个）"]
+    elif not has_src:
+        d["issues"] = ["还没有电源"]
+    elif not has_gnd:
+        d["issues"] = ["还没有 GROUND"]
     return d
 
 
@@ -894,6 +936,14 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
             s.sample_rate = 200.0 * freq if freq > 0 else 200000.0
         if start is not None:
             s.start = float(start)
+        if s.start and s.start < 0:
+            raise _err("BAD_ARGUMENT", "start 不能是负数（拿到 %g）" % s.start,
+                       field="start", value=s.start)
+        if s.start and s.stop and s.start >= s.stop:
+            raise _err("BAD_ARGUMENT",
+                       "start (%g) 必须小于 stop (%g)" % (s.start, s.stop),
+                       "start 是导出窗口的起点，stop 是终点。",
+                       field="start", value=s.start, stop=s.stop)
 
     # ---------- 再校验电路完整性 ----------
     #
@@ -934,6 +984,27 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
         res = isim.simulate(ms14, s.stop, s.sample_rate, verbose=False)
     t_run = _spent()
     _check("run")
+
+    # ---------- start 生效（v0.8.0） ----------
+    #
+    # Multisim 的 COM 接口没有"从 t0 起算"的入口：`run(stop)` 永远从 0 开始。
+    # v0.7.0 把 start 收进 IR 就没管了 —— 传了不报错、也不生效，是最容易
+    # 误导人的一类静默行为（v0.8.0 验收里 Agent 因此把启动暂态混进了拟合窗）。
+    # 现在的做法：仿真照旧从 0 跑，**导出窗口**裁掉 t < start 的采样点。
+    # 语义在 schema 里写清楚，不再假装能省掉这段计算。
+    if analysis != "dc" and s.start and s.start > 0:
+        trimmed = {}
+        for nm, (tt, vv) in res["data"].items():
+            keep = [(a, b) for a, b in zip(tt, vv) if a >= s.start - 1e-15]
+            if keep:
+                trimmed[nm] = ([p[0] for p in keep], [p[1] for p in keep])
+        if not trimmed:
+            raise _err("SIMULATION_FAILED",
+                       "start=%g 之后没有任何采样点（仿真只到 %g s）"
+                       % (s.start, s.stop),
+                       "把 start 调小，或把 stop 调大。",
+                       start=s.start, stop=s.stop)
+        res["data"] = trimmed
 
     timing = {"layout_s": round(t_layout, 3),
               "compile_s": round(t_compile - t_layout, 3),
@@ -990,7 +1061,7 @@ def simulate(circuit_id, analysis=None, start=None, stop=None,
         "outputs": outs, "probes": probe_map,
         "rlc_reported_by_multisim": res.get("rlc") or {},
         "state": res.get("state"), "sample_rate": s.sample_rate,
-        "stop": s.stop, "n": npts,
+        "stop": s.stop, "start": s.start, "n": npts,
         "ms14": os.path.relpath(ms14, ROOT),
         "ir_snapshot": os.path.relpath(snap, ROOT),
         "waveform": os.path.relpath(csv_path, ROOT) if chans else None,
@@ -1090,6 +1161,40 @@ def _probe_not_found(given, rec):
                 field="probe_id", value=g, available=ids)
 
 
+def _pair_probes(chans, order, topo, ir):
+    """选出"输入探针 / 输出探针"。返回 (in_pid, out_pid, pairing)。
+
+    **v0.8.0 修的就是这里。** v0.7.0 直接拿探针的**添加顺序**当输入/输出：
+    先加的算输入、后加的算输出。于是"先放输出探针、后放输入探针"的电路
+    会得到 gain = 1/真值、相位符号翻转 —— 而返回里 `mode="ratio"` 加上
+    `in_probe` / `out_probe` 两个字段看起来非常权威，Agent 不核对就会写错。
+
+    现在优先按**拓扑**配对：
+        输入 = 源正极所在的网络（`_topology()` 已经算好）
+        输出 = `layout.analyze().out_net`
+    两个都找到且不是同一个探针，才用 ratio 模式；否则退回添加顺序，
+    并把 `pairing="probe_order"` 写进返回 —— 让 Agent 知道这个 gain 是
+    "按顺序猜的"，不是"按拓扑算的"。
+    """
+    net_in = topo.get("v_in_net")
+    out_net = None
+    try:
+        out_net = layoutmod.analyze(ir).out_net
+    except Exception:
+        out_net = None
+
+    in_pid = next((pid for pid in order if chans[pid].get("net") == net_in), None)
+    out_pid = next((pid for pid in order
+                    if out_net is not None and chans[pid].get("net") == out_net),
+                   None)
+    if in_pid and out_pid and in_pid != out_pid:
+        return in_pid, out_pid, "topology"
+    if len(order) >= 2:
+        return order[0], order[1], "probe_order"
+    single = order[0] if order else None
+    return single, single, "single"
+
+
 def measure(sim_id, what="all", probe_id=None):
     rec = _load_sim(sim_id)
     ir = irmod.CircuitIR.load(os.path.join(ROOT, rec["ir_snapshot"]))
@@ -1174,29 +1279,43 @@ def measure(sim_id, what="all", probe_id=None):
                 ch["offset"] = f[2]
 
         order = [p["probe_id"] for p in out["probes"] if p["probe_id"] in chans]
-        amp0 = chans[order[0]].get("amp")
         src_amp = float(topo["src"].value or 0.0) if topo["src"] else 0.0
-        if len(order) >= 2 and amp0:
-            amp1 = chans[order[1]].get("amp")
-            if amp1 is not None:
-                out["mode"] = "ratio"
-                out["gain"] = amp1 / amp0
-                out["in_probe"] = order[0]
-                out["out_probe"] = order[1]
-        else:
-            out["mode"] = "absolute"
-            out["gain"] = (amp0 / src_amp) if (amp0 and src_amp) else None
 
-        if len(order) >= 2:
-            p0 = chans[order[0]].get("phase_deg")
-            p1 = chans[order[1]].get("phase_deg")
-            if p0 is not None and p1 is not None:
-                d = p1 - p0
+        in_pid, out_pid, pairing = _pair_probes(chans, order, topo, ir)
+        out["pairing"] = pairing
+        if pairing == "topology":
+            a_in = chans[in_pid].get("amp")
+            a_out = chans[out_pid].get("amp")
+            out["mode"] = "ratio"
+            out["in_probe"] = in_pid
+            out["out_probe"] = out_pid
+            out["gain"] = (a_out / a_in) if (a_in and a_out is not None) else None
+            p_in = chans[in_pid].get("phase_deg")
+            p_out = chans[out_pid].get("phase_deg")
+            if p_in is not None and p_out is not None:
+                d = p_out - p_in
                 while d > 180:
                     d -= 360
                 while d < -180:
                     d += 360
                 out["phase_deg"] = d
+        else:
+            # 只有一个探针（或拓扑判断不出输入/输出网络）：用源声明的幅值当参考
+            single = out_pid if out_pid else (order[0] if order else None)
+            amp0 = chans[single].get("amp") if single else None
+            out["mode"] = "absolute"
+            out["out_probe"] = single
+            out["gain"] = (amp0 / src_amp) if (amp0 and src_amp) else None
+            if single:
+                ph = chans[single].get("phase_deg")
+                if ph is not None:
+                    out["phase_deg"] = ph
+            if len(order) >= 2:
+                out["notes"].append(
+                    "拓扑判断不出输入/输出网络，gain 按探针添加顺序配对"
+                    "（pairing=probe_order），可能方向相反；"
+                    "更稳的做法是用 channels[].amp 自己算比值。")
+
         out["source_amp"] = src_amp
         out["source_freq"] = freq
         out["theory"] = isim.theory(ir)
@@ -1260,7 +1379,21 @@ def get_waveform(sim_id, probe_id=None, max_points=200):
     except (TypeError, ValueError):
         max_points = 200
     max_points = max(2, min(max_points, 5000))
-    step = max(1, len(t) // max_points)
+
+    # v0.8.0：预览改成"在整段窗口上均匀取 max_points 个点（含首尾）"。
+    # 旧写法是 range(0, n, n//max_points)：当步长正好等于信号周期的整数倍时
+    # （1600 点 / 8 点 = 200 点 = 1 kHz 的整整一个周期），每个预览点落在
+    # 同一相位上，画出来是一条水平线 —— v0.8.0 验收里 Agent 据此误判
+    # "preview 数据错位"。数据本身没错，是抽样方式会混叠。改成非整数步长后
+    # 采样相位逐点移动，不会再出现这种假象。
+    n_t = len(t)
+    if n_t <= max_points:
+        idx = list(range(n_t))
+        step = 1
+    else:
+        idx = sorted({int(round(k * (n_t - 1) / float(max_points - 1)))
+                      for k in range(max_points)})
+        step = round((n_t - 1) / float(max_points - 1), 3)
 
     for pid, (net, nm) in chans_of.items():
         v = data[nm]
@@ -1268,8 +1401,8 @@ def get_waveform(sim_id, probe_id=None, max_points=200):
         ch.update({
             "n": len(v), "min": min(v), "max": max(v),
             "mean": sum(v) / len(v),
-            "preview": {"t": [t[i] for i in range(0, len(t), step)],
-                        "v": [v[i] for i in range(0, len(v), step)]},
+            "preview": {"t": [t[i] for i in idx],
+                        "v": [v[i] for i in idx]},
         })
         out["channels"][pid] = ch
     out["preview_step"] = step

@@ -1,6 +1,7 @@
 # MCP Tool API —— 电路执行器
 
-> 版本：**v0.7.0**（v0.6.0 首版 → v0.6.1 Agent 验收 → v0.6.2 接口一致性修整 → v0.7.0 分支感知布局）
+> 版本：**v0.8.0**（v0.6.0 首版 → v0.6.1 Agent 验收 → v0.6.2 接口一致性修整 →
+> v0.7.0 分支感知布局 → v0.8.0 LLM Agent 验收 + 三个真 bug 修复）
 > 定位：把已经验证过的 **Circuit IR + Multisim 执行链**包成一个 Agent 能直接用的接口。
 > 代码：`tools/circuit_session.py`（业务逻辑）+ `tools/mcp_server.py`（协议层）。
 >
@@ -13,6 +14,19 @@
 > 支持单主干 + 到地并联支路（分压 / 旁路电容 / T 型 / 多级 RC 梯形）。
 > 新增 `tools/layout.py`；`circuit_session` 里不再有拓扑逻辑。
 > 详见 [layout.md](layout.md)。
+>
+> **v0.8.0**：把 API 丢给真正的 LLM Agent（只看 `tools/list`）跑了 5 个任务、
+> 128 次调用，挖出三个缺陷并修掉 —— 都是"返回结构看起来对、其实方向/语义错"的类型：
+>
+> | 缺陷 | 修法 |
+> | --- | --- |
+> | `measure` 的 `gain` / `phase_deg` 按**探针添加顺序**配对 | 按拓扑配对（输入=源正极网，输出=`topology.out_net`），新增 `pairing` 字段 |
+> | `simulate.start` 传了不报错也不生效 | 真的裁导出窗口（仿真仍从 t=0，COM 无入口），并加参数校验 |
+> | `topology.supported` 混了"布局认不认"和"线接完没有" | 拆成 `supported` + `complete` / `issues` |
+> | `get_waveform` 预览按整数步长抽样，可能和信号周期重合造成混叠 | 改成整段均匀取点（含首尾），非整数步长 |
+>
+> 完整验收报告：[agent-acceptance-v0.8.md](agent-acceptance-v0.8.md)。
+> 回归：`test_mcp_session` 113/113、`test_layout` 51/51。
 
 ---
 
@@ -214,6 +228,20 @@ MCP 自己处理 `LocalName`、几何落点、唯一命名、序号分配。
 `transient` 不传 `stop` / `sample_rate` 时按信号频率推算：6 个周期、每周期 200 点
 （和 `nl2ir` 的默认值一致，这个组合在真机上验证过）。
 
+**`start` 是"导出窗口的起点"，不是"仿真起点"**（v0.8.0 修）。Multisim 的 COM 接口没有
+"从 t0 起算"的入口，所以仿真永远从 0 跑，返回的波形 / CSV 会裁掉 `t < start` 的采样点：
+
+```json
+{"circuit_id": "c-...", "analysis": "transient", "start": 0.003, "stop": 0.007}
+// -> n = 800（1400 个点裁掉前 600 个），CSV 第一行 t = 0.003
+```
+
+用它跳过启动暂态，**不要指望它省计算时间**。`start < 0` 或 `start >= stop` 会报 `BAD_ARGUMENT`。
+
+> v0.7.0 及以前，`start` 只是被收进 IR 就没再用了 —— 传了不报错、也不生效。
+> 这是 v0.8.0 验收里三个 Agent 都踩到的静默行为，见
+> [agent-acceptance-v0.8.md](agent-acceptance-v0.8.md) 问题 2。
+
 返回里带 `sim_id`、`outputs`、`probes`、`summary`（按 probe_id 键）、`record`、
 `waveform`、`timing`。
 
@@ -250,6 +278,26 @@ Agent 拿到这个数就能判断"这个电路该给多少超时"，而不是靠
 
 `transient` 额外给 `gain`、`phase_deg`、`theory`；`dc` 给 `v_resistor`、`current`。
 
+**`gain` 的方向由拓扑决定，不由探针顺序决定**（v0.8.0 修）：
+
+```
+输入探针 = 源正极所在网络上的探针
+输出探针 = layout.analyze().out_net 上的探针
+两个都找到 → pairing="topology"，gain = amp(输出)/amp(输入)，phase = 相位差
+找不到     → 退回添加顺序，pairing="probe_order"，并在 notes 里说明"可能方向相反"
+只有一个   → mode="absolute"，gain = amp / 源声明的幅值
+```
+
+> v0.7.0 直接拿**添加顺序**当输入/输出。于是"先加输出探针"的电路会得到
+> `gain = 1/真值`、相位符号翻转 —— 而返回里 `mode="ratio"` 加上
+> `in_probe` / `out_probe` 两个字段看起来非常权威。v0.6.1 / v0.7.0 两次验收
+> 都没发现，因为那两次恰好都是先加输入探针。v0.8.0 的 LLM Agent 按自己的设计走，
+> 一上来就踩到了（3 次独立复现）。
+
+每个通道的 `mean` 是**全窗算术平均**（含启动暂态，不一定接近 0）；
+`offset` 才是正弦拟合出来的直流分量。两者不是一回事 —— 一次 1 kHz / 6 ms 的仿真里，
+`mean` 可能是 10.8 mV 而 `offset` 只有 −1.3 µV。
+
 `channels` 是**以 `probe_id` 为键**的对象，和 `get_waveform` 的 `channels` 完全一致。
 每个通道固定带 `probe_id` / `label` / `output` / `net` / `kind`，再叠加测量字段。
 **`what` 过滤不会删掉身份字段** —— 否则 `what="amplitude"` 之后 Agent 就不知道
@@ -270,6 +318,12 @@ Agent 拿到这个数就能判断"这个电路该给多少超时"，而不是靠
 
 不会把整条波形塞进返回值。默认给摘要（`n` / `min` / `max` / `mean` / `t_range`）
 + 最多 `max_points` 个采样点的预览（均匀抽样），完整数据在 `artifact` 指向的 CSV。
+
+> **预览的抽样方式在 v0.8.0 改过。** 旧写法是按整数步长 `n // max_points` 取点：
+> 1600 点取 8 个 → 步长 200 点，正好是 1 kHz 信号的一个完整周期，于是 8 个预览点
+> 落在同一相位上，`v` 是一条水平线 —— v0.8.0 验收里 Agent 据此判定"preview 数据错位"。
+> 数据本身没错，是抽样混叠。现在改成在整段窗口上均匀取 `max_points` 个点（含首尾），
+> 步长不是整数，采样相位逐点移动。**要看真实波形仍然应该读 artifact 的 CSV。**
 
 `channels` 和 `measure` 用同一套键（`probe_id`），两个工具的结果可以直接对照。
 
@@ -463,6 +517,22 @@ Circuit IR → layout.analyze() → Topology → layout.plan() → {refdes: [x, 
 ```
 
 这样 Agent 可以在 `simulate` 之前就知道后端会怎么理解它的电路。
+
+**v0.8.0 起有两个独立的布尔值**（`supported` 和 `complete`）：
+
+```json
+// 线接完了，但后端不会摆并联到地
+{"kind": null, "supported": false, "reason": "parallel_shunt", "complete": true, ...}
+
+// 布局能摆，但 C1.2 还悬空
+{"kind": "bypass", "supported": true, "complete": false,
+ "issues": ["C1.2 还没接线"]}
+```
+
+分开的理由很实际：`LAYOUT_UNSUPPORTED` 有两种完全不同的含义 ——
+"电路本身没问题，是后端不会摆"（`complete=true`，该换拓扑或拆电路）和
+"你还有引脚悬空"（`complete=false`，该回去接线）。以前只有一个 `supported`，
+Agent 分不清该改哪里。
 
 ---
 

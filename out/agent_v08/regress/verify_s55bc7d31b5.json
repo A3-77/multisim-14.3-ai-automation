@@ -1,0 +1,94 @@
+{
+  "ok": true,
+  "sim_id": "s-55bc7d31b5",
+  "checks": {
+    "files": {
+      "ms14": {
+        "path": "out\\mcp\\sessions\\c-8cb44e993f\\regress_v080.ms14",
+        "exists": true,
+        "bytes": 31783
+      },
+      "waveform_csv": {
+        "path": "out\\mcp\\sessions\\c-8cb44e993f\\sims\\s-55bc7d31b5.csv",
+        "exists": true,
+        "bytes": 27526
+      },
+      "sim_record": {
+        "path": "out\\mcp\\sessions\\c-8cb44e993f\\sims\\s-55bc7d31b5.json",
+        "exists": true,
+        "bytes": 1812
+      }
+    },
+    "csv": {
+      "rows": 800,
+      "columns": [
+        "V(探针1)",
+        "V(探针2)"
+      ],
+      "t_range": [
+        0.003,
+        0.006995
+      ]
+    },
+    "recompute": {
+      "source_freq": 1000.0,
+      "skip_ratio": 0.4,
+      "worst_amp_rel": 0.0,
+      "worst_phase_deg": 0.0,
+      "consistent": true
+    },
+    "sim_record": {
+      "analysis": "transient",
+      "state": "0",
+      "n": 800,
+      "outputs": [
+        "V(探针1)",
+        "V(探针2)"
+      ],
+      "timing": {
+        "layout_s": 0.0,
+        "compile_s": 15.942,
+        "run_s": 5.039,
+        "total_s": 20.981
+      },
+      "topology_kind": "bypass"
+    }
+  },
+  "channels": {
+    "P_out": {
+      "output": "V(探针1)",
+      "csv_fit": {
+        "amp": 0.9759013851268257,
+        "phase_deg": -11.750943436006109,
+        "offset": -2.4270381376740734e-06
+      },
+      "measure": {
+        "amp": 0.9759013851268257,
+        "phase_deg": -11.750943436006109
+      },
+      "diff": {
+        "amp_abs": 0.0,
+        "amp_rel": 0.0,
+        "phase_deg": 0.0
+      }
+    },
+    "P_in": {
+      "output": "V(探针2)",
+      "csv_fit": {
+        "amp": 0.9967909914139698,
+        "phase_deg": 2.0163467085582075e-05,
+        "offset": -6.264238577095955e-07
+      },
+      "measure": {
+        "amp": 0.9967909914139698,
+        "phase_deg": 2.0163467085582075e-05
+      },
+      "diff": {
+        "amp_abs": 0.0,
+        "amp_rel": 0.0,
+        "phase_deg": 0.0
+      }
+    }
+  },
+  "circuit_id": "c-8cb44e993f"
+}

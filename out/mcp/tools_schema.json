@@ -15,7 +15,7 @@
     },
     {
       "name": "add_component",
-      "description": "往电路里加一个元件。只接受已验证过真机仿真的五种：\n  SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE（正弦源，value=幅值V，parameters={'frequency': Hz}）\n  POWER_SOURCES/DC_POWER（直流源，value=电压V）\n  RESISTOR/RESISTOR_VIRTUAL（value=阻值 Ω）\n  CAPACITOR/CAPACITOR_VIRTUAL（value=容值 F）\n  POWER_SOURCES/GROUND（不需要 value）\n不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。\n返回的 component 是固定形状：refdes / family / part / value / value_name / value_unit / parameters / pins / aliases。parameters 的键永远是语义名（frequency），不会是数字序号。",
+      "description": "往电路里加一个元件。只接受已验证过真机仿真的五种（family 和 part 是**两个独立字段**，不要把斜杠连写当成一个值）：\n  family=SIGNAL_VOLTAGE_SOURCES, part=AC_VOLTAGE（正弦源，value=幅值V，parameters={'frequency': Hz}）\n  family=POWER_SOURCES, part=DC_POWER（直流源，value=电压V）\n  family=RESISTOR, part=RESISTOR_VIRTUAL（value=阻值 Ω）\n  family=CAPACITOR, part=CAPACITOR_VIRTUAL（value=容值 F）\n  family=POWER_SOURCES, part=GROUND（不需要 value）\n引脚（connect 里用）：AC_VOLTAGE / DC_POWER 是 '1' '2'，另有别名 '+'->'1'、'-'->'2'；电阻 / 电容只有 '1' '2'，**没有 +/- 别名**；GROUND 只有 '1'。\n不要传坐标 —— 布局由 simulate 自动算。refdes 不传就自动编号。\n返回的 component 是固定形状：refdes / family / part / value / value_name / value_unit / parameters / pins / aliases。parameters 的键永远是语义名（frequency），不会是数字序号。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -57,7 +57,7 @@
     },
     {
       "name": "connect",
-      "description": "把若干引脚连到同一条网络上。引脚写法：[\"V1\",\"+\"] 或 \"V1.+\"。\n网络名可以不给：含地的网络会自动叫 '0'，含电源正极的自动叫 'in'，其余 n1/n2。也可以给一个名字把引脚追加到已有网络。\n同一个引脚不能属于两条网络。不要传坐标。",
+      "description": "把若干引脚连到同一条网络上。引脚写法：[\"V1\",\"+\"] 或 \"V1.+\"。\n网络名可以不给：含地的网络会自动叫 '0'，含电源正极的自动叫 'in'，其余 n1/n2。\n显式给 net 时：**这个名字已经存在就追加**（把新引脚并进那条网络），不存在就新建 —— 返回顶层 created=true/false 告诉你走的是哪条路。\n同一个引脚不能属于两条网络。不要传坐标。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -108,7 +108,7 @@
     },
     {
       "name": "get_circuit",
-      "description": "只读地取回一个电路当前的状态，不改变任何东西。\n什么时候用：改了电路想确认现在长什么样；隔了几轮对话只记得 circuit_id；想在动手前先看看已经有什么。\n返回和 create / add_component / connect 完全相同的快照结构：components / nets / probes / topology / simulation / simulations / counts / warnings。如果这个电路已经仿真过，probes[] 里的 label / output 会被填上（否则是 null）。\ntopology 是后端对你这个电路的拓扑判断：kind（shunt_load / series_chain / divider / bypass / tee / ladder）、n_series、n_shunt、stages[]、out_net。电路还没搭完时 supported=false，reason 说明还差什么 —— 这是正常状态，不是错误。",
+      "description": "只读地取回一个电路当前的状态，不改变任何东西。\n什么时候用：改了电路想确认现在长什么样；隔了几轮对话只记得 circuit_id；想在动手前先看看已经有什么。\n返回和 create / add_component / connect 完全相同的快照结构：components / nets / probes / topology / simulation / simulations / counts / warnings。如果这个电路已经仿真过，probes[] 里的 label / output 会被填上（否则是 null）。\ntopology 是后端对你这个电路的拓扑判断：kind（shunt_load / series_chain / divider / bypass / tee / ladder）、n_series、n_shunt、stages[]、out_net。它有两个**互相独立**的布尔值：\n  supported —— 这种拓扑布局引擎认不认（不认时 reason 说明是哪一类）；\n  complete  —— 电路接完了没有（没接完时 issues 列出还差什么）。\n两个都是 false 是正常状态，不是错误。supported=true 但 complete=false 意味着\"能摆得下，但还有引脚悬空\"，这时候 simulate 会被 validate 拦住。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -124,7 +124,7 @@
     },
     {
       "name": "simulate",
-      "description": "编译并真跑 Multisim，返回仿真句柄 sim_id。\nanalysis 可选 transient（时域）或 dc（直流工作点，单点）。\n源类型与分析的匹配是强制的：AC_VOLTAGE 只能 transient，DC_POWER 默认 dc（也允许 transient）。不匹配会返回 ANALYSIS_NOT_SUPPORTED 并告诉你该改成什么。\ntransient 不传 stop / sample_rate 时按信号频率自动推算（6 个周期、每周期 200 点）。\n这个调用是阻塞的，实测单次 30 s 左右（编译 + 启 Multisim + 读数）。返回里带 timing（layout_s / compile_s / run_s / total_s），可以用它判断电路复杂度和该给多少超时。\n返回里还带 topology（这次仿真按什么拓扑布局的）。拓扑不在支持范围内时不会硬跑，而是返回 LAYOUT_UNSUPPORTED + context.reason；reason 有 fork（一个节点两条主干）/ parallel_shunt（并联到地）/ island（元件和电源不连通）/ too_many_stages 等。",
+      "description": "编译并真跑 Multisim，返回仿真句柄 sim_id。\nanalysis 可选 transient（时域）或 dc（直流工作点，单点）。\n源类型与分析的匹配是强制的：AC_VOLTAGE 只能 transient，DC_POWER 默认 dc（也允许 transient）。不匹配会返回 ANALYSIS_NOT_SUPPORTED 并告诉你该改成什么。\ntransient 不传 stop / sample_rate 时按信号频率自动推算（6 个周期、每周期 200 点）。这三个参数都**沿用 IR 里上次的值**（第一次才自动推算），想换窗口就显式传，别指望它自己重置。\nstart 是**导出窗口的起点**：仿真本身仍然从 t=0 算起（Multisim COM 没有\"从 t0 起算\"的入口），返回的波形和 CSV 会裁掉 t < start 的采样点 —— 用它跳过启动暂态，不要指望它省计算时间。\n这个调用是阻塞的，实测单次 30 s 左右（编译 + 启 Multisim + 读数）。返回里带 timing（layout_s / compile_s / run_s / total_s），可以用它判断电路复杂度和该给多少超时。返回里的 ms14 / waveform / record 是**相对仓库根目录**的路径。\n返回里还带 topology（这次仿真按什么拓扑布局的）。拓扑不在支持范围内时不会硬跑，而是返回 LAYOUT_UNSUPPORTED + context.reason；reason 有 fork（一个节点两条主干）/ parallel_shunt（并联到地）/ island（元件和电源不连通）/ too_many_stages 等。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -164,7 +164,7 @@
     },
     {
       "name": "measure",
-      "description": "从一次仿真里取测量值。what 决定返回哪些字段：\n  all（默认）      全部：均值 / RMS / 幅值 / 相位 / 增益\n  voltage          每通道的 mean / rms / min / max\n  amplitude        每通道的正弦拟合幅值（仅 transient）\n  phase            每通道相位（仅 transient）\n  dc_voltage       每通道直流电压（仅 dc）\ntransient 会额外给 gain / phase_deg / theory；dc 会给 v_resistor / current（I = V_R / R，R 是 Multisim 读回来的实际阻值，\n用 r_source 标明来源：multisim / ir）。\nchannels 是以 **probe_id 为键** 的对象，和 get_waveform 的 channels 完全一致；每个通道固定带 probe_id / label / output / net / kind，再叠加测量字段（what 过滤不会删掉身份字段）。",
+      "description": "从一次仿真里取测量值。what 决定返回哪些字段：\n  all（默认）      全部：均值 / RMS / 幅值 / 相位 / 增益\n  voltage          每通道的 mean / rms / min / max\n  amplitude        每通道的正弦拟合幅值（仅 transient）\n  phase            每通道相位（仅 transient）\n  dc_voltage       每通道直流电压（仅 dc）\ntransient 会额外给 gain / phase_deg / theory；dc 会给 v_resistor / current（I = V_R / R，R 是 Multisim 读回来的实际阻值，\n用 r_source 标明来源：multisim / ir）。\n**gain 的方向由拓扑决定，不由探针添加顺序决定**：输入探针取源正极所在网络，输出探针取 topology.out_net；两个都找到时 pairing=\"topology\"。找不到（比如只有一个探针）时退回 absolute 模式（以源声明的幅值为参考）并在 pairing / notes 里说明。\n每通道的 mean 是**全窗算术平均**（含启动暂态，不一定接近 0）；offset 才是正弦拟合出来的直流分量。两者含义不同，别当成同一件事。\nchannels 是以 **probe_id 为键** 的对象，和 get_waveform 的 channels 完全一致；每个通道固定带 probe_id / label / output / net / kind，再叠加测量字段（what 过滤不会删掉身份字段）。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -194,7 +194,7 @@
     },
     {
       "name": "get_waveform",
-      "description": "取波形数据。不会把整条波形塞进返回值：默认只给摘要（n / min / max / mean / 时间范围）+ 最多 max_points 个采样点的预览，完整数据在 artifact 指向的 CSV 里。\nchannels 是以 **probe_id 为键** 的对象，和 measure 的 channels 完全一致 —— 两个工具的通道可以直接对照，不需要自己映射。",
+      "description": "取波形数据。不会把整条波形塞进返回值：默认只给摘要（n / min / max / mean / 时间范围）+ 最多 max_points 个采样点的预览，完整数据在 artifact 指向的 CSV 里（路径相对仓库根目录）。\n预览是在整段窗口上均匀取点（含首尾），不是按整数步长抽样 —— 整数步长会和信号周期重合，画出来可能是一条水平线（假象）。要看真实波形就打开 artifact 的 CSV。\nchannels 是以 **probe_id 为键** 的对象，和 measure 的 channels 完全一致 —— 两个工具的通道可以直接对照，不需要自己映射。",
       "inputSchema": {
         "type": "object",
         "properties": {

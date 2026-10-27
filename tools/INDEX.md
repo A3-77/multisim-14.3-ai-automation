@@ -18,7 +18,8 @@
 | `layout.py` | **拓扑分析 + 坐标**（v0.7.0 P2）：`analyze()` 判断拓扑、`plan()` 生成坐标，两件事不混；支持单主干+到地并联（6 类模板），其余明确拒绝 |
 | `mcp_server.py` | **MCP Server**（JSON-RPC over stdio，8 个工具；stdout 只走协议；schema 就是 Agent 的 API 文档） |
 | `mcp_client.py` | MCP 验收客户端：起子进程走真实协议，建 RC 与 DC 两个电路，真跑 Multisim |
-| `test_mcp_session.py` | 会话层测试：96 项，不需要 Multisim（含 P2 的 4 类拓扑与拒绝） |
+| `agent_acceptance/` | **v0.8.0 的 LLM Agent 测试台**：`mcp_stdio.py`（最小客户端）/ `agent_cli.py`（Agent 唯一入口，写 trace）/ `summarize.py`（trace→报告）/ `verify_sim.py`（从 CSV 独立复算）。都不 import 项目模块 |
+| `test_mcp_session.py` | 会话层测试：113 项，不需要 Multisim（含 P2 拓扑、v0.8.0 的探针配对 / complete / start 校验） |
 | `test_layout.py` | 拓扑层测试：51 项，纯逻辑。6 类模板 + 6 类拒绝 + 坐标性质 |
 | `ir_sim.py` | 仿真 + 拟合内核（`nl_run` 用；`ir_run` 保持原样当基线，不被它影响） |
 | `nl2ir.py` | **中文 → Circuit IR**（规则解析器，不依赖 LLM；产出前先 `validate()`） |
