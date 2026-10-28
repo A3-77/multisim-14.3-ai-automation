@@ -5,6 +5,7 @@
 ![端到端链路](docs/charts/pipeline.svg)
 
 ![Agent 自己搭的半波整流电路](out/agent_v092/case_b_rectifier/01_schematic.png)
+
 ![真实仿真波形](out/agent_v092/case_b_rectifier/02_simulation.png)
 
 <sub>↑ v0.9.2：一个只读过 8 个 MCP 工具说明、看不到源码的 LLM Agent，自己选元件、自己连线。Multisim 14.3.3 真实打开、真实仿真、真实窗口截图 —— 全程没有人工点过一下鼠标。</sub>
