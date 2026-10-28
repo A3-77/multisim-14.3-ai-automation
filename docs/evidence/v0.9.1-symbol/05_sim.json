@@ -1,0 +1,30 @@
+{
+  "src": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\fix_skel\\rc_lowpass_AFTER.ms14",
+  "probes": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "channels": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "csv": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\out\\fix_skel\\after_wave.csv",
+  "n_samples": 400,
+  "fit": {
+    "V(探针1)": {
+      "amp": 0.9967,
+      "phase_deg": 90.0,
+      "dc": -0.0
+    },
+    "V(探针2)": {
+      "amp": 0.704,
+      "phase_deg": 135.06,
+      "dc": 0.0
+    }
+  },
+  "theory": {
+    "fc": 1001.0,
+    "gain": 0.7075,
+    "phase_deg": -44.97
+  }
+}

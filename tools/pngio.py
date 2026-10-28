@@ -99,36 +99,44 @@ def encode(path, w, h, rgb):
     return path
 
 
-def light_bbox(path, region=None, thresh=245, step=2, min_run=20):
+def light_bbox(path, region=None, thresh=250, step=4, frac=0.35):
     """"白纸区域"包围盒：找图纸本身的位置。
 
-    Multisim 画布上图纸是白的、图纸外是深灰，所以按"接近纯白"取包围盒
-    就等于拿到图纸边界。用行/列计数而不是逐像素取极值，避免网格点或
-    一根抗锯齿白线把范围撑大。
+    Multisim 画布上图纸是纯白 (255,255,255)、图纸外是灰 (171)、网格点是浅灰 (200)。
+    所以按"接近纯白"统计行/列的占比，占比超过 frac 的连续段就是图纸范围。
+    用占比而不是"最外侧白像素"，避免一根抗锯齿白线把范围撑大。
     """
     w, h, ch, data = decode(path)
     rgb = to_rgb(w, h, ch, data)
     x0, y0, x1, y1 = region or (0, 0, w, h)
     x0, y0 = max(0, x0), max(0, y0)
     x1, y1 = min(w, x1), min(h, y1)
-    cols = [0] * (x1 - x0)
-    rows = [0] * (y1 - y0)
+    cols = []
+    for x in range(x0, x1, step):
+        n = 0
+        tot = 0
+        for y in range(y0, y1, step):
+            i = (y * w + x) * 3
+            tot += 1
+            if rgb[i] >= thresh and rgb[i + 1] >= thresh and rgb[i + 2] >= thresh:
+                n += 1
+        cols.append((x, n / float(tot or 1)))
+    rows = []
     for y in range(y0, y1, step):
+        n = 0
+        tot = 0
         base = y * w * 3
-        ry = (y - y0) // step
         for x in range(x0, x1, step):
             i = base + x * 3
+            tot += 1
             if rgb[i] >= thresh and rgb[i + 1] >= thresh and rgb[i + 2] >= thresh:
-                cols[(x - x0) // step] += 1
-                rows[ry] += 1
-    ncol = len(cols)
-    need_c = max(min_run // step, (y1 - y0) // step // 2)
-    need_r = max(min_run // step, ncol // 2)
-    xs = [x0 + i * step for i, v in enumerate(cols) if v >= need_c]
-    ys = [y0 + i * step for i, v in enumerate(rows) if v >= need_r]
+                n += 1
+        rows.append((y, n / float(tot or 1)))
+    xs = [x for x, f in cols if f >= frac]
+    ys = [y for y, f in rows if f >= frac]
     if not xs or not ys:
         return None
-    return (xs[0], ys[0], xs[-1], ys[-1])
+    return (min(xs), min(ys), max(xs) + step, max(ys) + step)
 
 
 def dark_bbox(path, region=None, thresh=150, step=2):

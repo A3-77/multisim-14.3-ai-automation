@@ -301,15 +301,24 @@ class Circuit:
         「相对引脚符号原点」的偏移。把它一起平移，引脚画在正确位置、CiNode/Ports
         拓扑也完全正确（ReportNetlist 看不出问题），但电气连接点会整体偏移，
         SPICE 侧该元件引脚悬空 → 整条元件被丢弃 → 表现为「电阻开路、电流为零」。
+
+        同理，symbol **根节点**（CIITSymbolComp 本身）必须保持单位矩阵：
+        子对象存的是图纸绝对坐标，根再叠一次平移会把符号推出画布
+        （见 msbuild.Assembler.add 里 v0.9.1 的说明）。
         """
         item = self.symbol_of(ciid)
         if item is None:
             return False
+        root = list(item)[0] if len(item) else None
         for el in item.iter():
             if el.tag == "CIITPinConnectorComp":
                 continue
             x, y = el.get("Transformer-M20"), el.get("Transformer-M21")
             if x is not None and y is not None:
+                if el is root:
+                    el.set("Transformer-M20", "0.")
+                    el.set("Transformer-M21", "0.")
+                    continue
                 el.set("Transformer-M20", "%g." % (_flt(x) + dx))
                 el.set("Transformer-M21", "%g." % (_flt(y) + dy))
         return True

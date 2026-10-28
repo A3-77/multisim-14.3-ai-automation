@@ -528,6 +528,23 @@ class Assembler:
                 pname = (el.get("PinName") or "").replace("&ASC", "")
                 if pname in port_name_to_id:
                     el.set("PortID", port_name_to_id[pname])
+            # **关键（v0.9.1 修复 · 符号不渲染）**
+            # symbol 根节点（CIITSymbolComp 本身）的 Transformer 必须归零。
+            #
+            # Multisim 渲染时的最终位置 = 根变换 ∘ 子对象变换；而子对象
+            # （CIITSymbolBorderRect / CIITPinSymbolComp / 文字）存的是**图纸绝对
+            # 坐标**，不是相对根的偏移。所以根一旦带上平移，就等于把整个符号
+            # 再叠加一次偏移 —— 符号被推到画布外，视觉上"符号丢失"，
+            # 但 CiNode/CiPort 拓扑与 SPICE 网表完全正确（仿真照跑）。
+            #
+            # donor 原件里根平移通常很小（RESISTOR 是 (0,-18)）或干脆是
+            # "绝对坐标的补偿量"，所以过去的做法（把根一起平移）看着没崩，
+            # 实际已经在积累误差；GROUND 的根是 (270,450)，一叠加就飞出图纸。
+            #
+            # 实测：归零后 V1/R1/C1/GND 符号与导线全部正确对位
+            # （out/fix_skel/rc_root0.png）。6 个 enabled 元件的根线性部分
+            # 都是单位矩阵，归零不影响朝向/镜像。
+            sym_root = list(sym)[0] if len(sym) else None
             for el in sym.iter():
                 # CIITPinConnectorComp 的 Transformer 在官方样例里恒为 (0,0)；
                 # 它代表电气连接点，跟着元件平移会让连接点偏离本体 200+ 单位，
@@ -535,9 +552,14 @@ class Assembler:
                 if el.tag == "CIITPinConnectorComp":
                     continue
                 px, py = el.get("Transformer-M20"), el.get("Transformer-M21")
-                if px is not None and py is not None:
-                    el.set("Transformer-M20", "%g." % (_f(px) + dx))
-                    el.set("Transformer-M21", "%g." % (_f(py) + dy))
+                if px is None or py is None:
+                    continue
+                if el is sym_root:
+                    el.set("Transformer-M20", "0.")
+                    el.set("Transformer-M21", "0.")
+                    continue
+                el.set("Transformer-M20", "%g." % (_f(px) + dx))
+                el.set("Transformer-M21", "%g." % (_f(py) + dy))
 
             # 把引脚引用的 CODPinComp 定义也复制一份并平移
             refs = []

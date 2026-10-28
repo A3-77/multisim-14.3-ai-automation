@@ -1,0 +1,80 @@
+[
+  {
+    "part": "CAPACITOR/CAPACITOR_VIRTUAL",
+    "donor": "De cuadrada a sin.ms14",
+    "refdes": "C1",
+    "M00": 1.0,
+    "M01": 0.0,
+    "M10": 0.0,
+    "M11": 1.0,
+    "M20": -36.0,
+    "M21": 9.0,
+    "linear_identity": true,
+    "root_offset_nonzero": true
+  },
+  {
+    "part": "DIODE/1N4007G",
+    "donor": "Fuente capacitiva final.ms14",
+    "refdes": "D2",
+    "M00": 1.0,
+    "M01": 0.0,
+    "M10": 0.0,
+    "M11": 1.0,
+    "M20": -9.0,
+    "M21": -27.0,
+    "linear_identity": true,
+    "root_offset_nonzero": true
+  },
+  {
+    "part": "POWER_SOURCES/DC_POWER",
+    "donor": "01 3D元件仿真.ms14",
+    "refdes": "V1",
+    "M00": 1.0,
+    "M01": 0.0,
+    "M10": 0.0,
+    "M11": 1.0,
+    "M20": 693.0,
+    "M21": 144.0,
+    "linear_identity": true,
+    "root_offset_nonzero": true
+  },
+  {
+    "part": "POWER_SOURCES/GROUND",
+    "donor": "02 同相加法器.ms14",
+    "refdes": "0",
+    "M00": 1.0,
+    "M01": 0.0,
+    "M10": 0.0,
+    "M11": 1.0,
+    "M20": 270.0,
+    "M21": 450.0,
+    "linear_identity": true,
+    "root_offset_nonzero": true
+  },
+  {
+    "part": "RESISTOR/RESISTOR_VIRTUAL",
+    "donor": "Amplificador para resistencia de 1mOhm.ms14",
+    "refdes": "R1",
+    "M00": 1.0,
+    "M01": 0.0,
+    "M10": 0.0,
+    "M11": 1.0,
+    "M20": 0.0,
+    "M21": -18.0,
+    "linear_identity": true,
+    "root_offset_nonzero": true
+  },
+  {
+    "part": "SIGNAL_VOLTAGE_SOURCES/AC_VOLTAGE",
+    "donor": "04 仪表放大器.ms14",
+    "refdes": "V1",
+    "M00": 1.0,
+    "M01": 0.0,
+    "M10": 0.0,
+    "M11": 1.0,
+    "M20": 297.0,
+    "M21": 288.0,
+    "linear_identity": true,
+    "root_offset_nonzero": true
+  }
+]

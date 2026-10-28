@@ -13,7 +13,10 @@
         "1",
         "2"
       ],
-      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\04 仪表放大器.ms14"
+      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\04 仪表放大器.ms14",
+      "donor_refdes": "V1",
+      "origin": "legacy",
+      "spice_template": null
     },
     {
       "refdes": "R1",
@@ -26,7 +29,10 @@
         "1",
         "2"
       ],
-      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\Amplificador para resistencia de 1mOhm.ms14"
+      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\Amplificador para resistencia de 1mOhm.ms14",
+      "donor_refdes": "R1",
+      "origin": "legacy",
+      "spice_template": null
     },
     {
       "refdes": "C1",
@@ -39,7 +45,10 @@
         "1",
         "2"
       ],
-      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\De cuadrada a sin.ms14"
+      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\De cuadrada a sin.ms14",
+      "donor_refdes": "C1",
+      "origin": "legacy",
+      "spice_template": null
     },
     {
       "refdes": "GND1",
@@ -51,7 +60,10 @@
       "pins": [
         "1"
       ],
-      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\02 同相加法器.ms14"
+      "donor": "C:\\Users\\A377\\WorkBuddy AI\\ni\\multisim-ctrl\\corpus\\samples14\\02 同相加法器.ms14",
+      "donor_refdes": "0",
+      "origin": "legacy",
+      "spice_template": null
     }
   ],
   "nets": [
@@ -93,7 +105,9 @@
       ],
       "local_name": "&UNI_uc263a294881",
       "net": "in",
-      "node": "233431816"
+      "node": "233431816",
+      "vertices": 3,
+      "at_pin": null
     },
     {
       "refdes": "P2",
@@ -106,10 +120,12 @@
       ],
       "local_name": "&UNI_uc263a294882",
       "net": "out",
-      "node": "233431840"
+      "node": "233431840",
+      "vertices": 3,
+      "at_pin": null
     }
   ],
-  "bytes": 31763,
+  "bytes": 31713,
   "simulation": {
     "analysis": "transient",
     "start": 0.0,
