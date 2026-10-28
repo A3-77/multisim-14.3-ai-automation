@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="272" viewBox="0 0 880 272" role="img" aria-label="v0.6.0 MCP 工具">
+<rect width="880" height="272" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="24.0" y="28.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="15" fill="#0f172a" font-weight="600" text-anchor="start" >v0.6.0 · 8 个有状态关系的 MCP 工具</text>
+<text x="24.0" y="47.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#64748b" font-weight="400" text-anchor="start" >Agent 只看到 tools/list 和工具返回；不传坐标、不碰 CiID / CiPort / SimState，布局按拓扑自动算</text>
+<rect x="24" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="77.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#1d4ed8" font-weight="600" text-anchor="middle" >create_circuit</text>
+<text x="77.0" y="125.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" >建电路 → c-id</text>
+<line x1="130" y1="112" x2="145" y2="112" stroke="#cbd5e1" stroke-width="1.5"/>
+<path d="M140 108 L145 112 L140 116" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="145" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="198.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#475569" font-weight="600" text-anchor="middle" >add_component</text>
+<line x1="251" y1="112" x2="266" y2="112" stroke="#cbd5e1" stroke-width="1.5"/>
+<path d="M261 108 L266 112 L261 116" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="266" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="319.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#475569" font-weight="600" text-anchor="middle" >connect</text>
+<line x1="372" y1="112" x2="387" y2="112" stroke="#cbd5e1" stroke-width="1.5"/>
+<path d="M382 108 L387 112 L382 116" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="387" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="440.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#475569" font-weight="600" text-anchor="middle" >add_probe</text>
+<line x1="493" y1="112" x2="508" y2="112" stroke="#cbd5e1" stroke-width="1.5"/>
+<path d="M503 108 L508 112 L503 116" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="508" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="561.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#1d4ed8" font-weight="600" text-anchor="middle" >simulate</text>
+<text x="561.0" y="125.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" >→ sim_id</text>
+<line x1="614" y1="112" x2="629" y2="112" stroke="#cbd5e1" stroke-width="1.5"/>
+<path d="M624 108 L629 112 L624 116" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="629" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="682.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#475569" font-weight="600" text-anchor="middle" >measure</text>
+<text x="682.0" y="125.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" >增益 / 相位</text>
+<line x1="735" y1="112" x2="750" y2="112" stroke="#cbd5e1" stroke-width="1.5"/>
+<path d="M745 108 L750 112 L745 116" fill="none" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="750" y="86" width="106" height="52" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="803.0" y="108.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#475569" font-weight="600" text-anchor="middle" >get_waveform</text>
+<text x="803.0" y="125.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="10" fill="#64748b" font-weight="400" text-anchor="middle" >原始采样点</text>
+<rect x="24" y="164" width="832" height="40" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+<text x="40.0" y="189.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#1e40af" font-weight="400" text-anchor="start" >get_circuit（第 8 个）—— 随时只读取回当前状态，不改变任何东西；探针只有 probe_id 一个身份，measure 与 get_waveform 的键完全一致</text>
+<text x="24.0" y="232.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#64748b" font-weight="400" text-anchor="start" >错误是结构化返回的：每个错误都带 code / message / hint / context，LLM 接进来之后能自己纠正。</text>
+<text x="24.0" y="252.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#64748b" font-weight="400" text-anchor="start" >实测：MCP 链路 0.706316 / −45.065° 与中文链路 0.70632 / −45.06° 一致，56 项断言全过（走真实 JSON-RPC 子进程）。</text>
+</svg>

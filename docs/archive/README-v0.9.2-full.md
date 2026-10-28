@@ -1,0 +1,1172 @@
+# Multisim 14.3 AI 自动化 —— 逆向工程报告
+
+> ## 🔌 v0.9.0（2026-10-27）：Agent 第一次用上二极管 —— DIODE / 1N4007G 完整闭环
+>
+> v0.8.0 的 Agent 只能用 5 种元件，而且这 5 种是**手写死在代码里**的。
+> 加一种元件要改三处：IR 白名单、会话层文案、布局模板。没法规模化。
+>
+> v0.9.0 把"元件信息从哪来"这件事交回给**真实 `.ms14` 文件**：
+>
+> | 层 | 之前 | v0.9.0 |
+> | --- | --- | --- |
+> | ComponentSpec | 手写字面量 | `build_registry.py` 扫 128 个 `.ms14`（corpus 10 + 官方 118），抽出 **192 种**元件的引脚名 / 引脚几何 / SPICE 模板 / donor 来源。**零手写** |
+> | 闸门 | 无（硬编码即白名单） | `registry/components.json` 的 `enabled` 列表。**`parts` 有 192 条 ≠ 支持 192 种** |
+> | 布局 | 单主干 + 到地并联（6 类） | 加 `halfwave_rectifier` 一类；既有 6 类的 `plan()` 代码**一行没动** |
+> | MCP schema | 手写文案 | 从 `PART_META` 自动生成，Agent 看到的就是 registry 里的事实 |
+>
+> 验收方式：`tools/agent_acceptance/run_diode.py`，**每次调用起独立进程，不 import 任何项目模块**，
+> Agent 只靠 `tools/list` 和工具返回走完这条路：
+>
+> ```
+> Agent → add_component(DIODE/1N4007G) → Circuit IR → halfwave_rectifier 布局
+>      → msbuild donor 克隆 → connect → .ms14 → Multisim 14.3.3
+>      → 真实仿真 → measure → 从 CSV 独立复算
+> ```
+>
+> | 项 | 实测 |
+> | --- | --- |
+> | 工具调用 | 14 次，**0 失败**，总耗时 25.9 s |
+> | 探针 | `outputs=['V(探针1)','V(探针2)']` —— **两个都在** |
+> | 输出波形 | 峰值 **4.3696 V**、最小 **−0.00010 V**、直流分量 **1.3051 V** |
+> | 独立复算 | 深导通压降 **0.6200 ± 0.0036 V**（n=2042）、反偏漏电 **1.11 mV** |
+> | 独立复算 vs `measure` | 逐位相同（差 **0.00e+00**） |
+> | 5 种老元件 | 一阶 RC 真机复测 gain **0.4332753354**（v0.8 基线 0.4332753） |
+> | 自动化测试 | `test_diode` **62/62**、`test_mcp_session` 113/113、`test_layout` 51/51 |
+>
+> 顺手挖出**两个被上一轮掩盖的问题**：
+>
+> 1. 上一轮"二极管通过"其实**只注册了一个探针** —— 第二个探针落在二极管阴极（属别人的网络）上。
+>    现在 `_pick_probe_xy()` 检测落点是别人的引脚就换点。
+> 2. 恒定压降模型 `Vdc = Vm/π − Vf/2` **只在深导通区成立**。实测深导通 Vf = 0.620 V，
+>    中等导通 0.589 V，刚开启时低到 0.128 V。理论值因此改成**区间**，并给出 `bracket.pos`。
+>
+> 👉 [完整报告：10 条要求逐条对照 + 实测数据 + NPN 扩展评估](docs/v0.9-diode.md)
+>
+> ---
+>
+> ## 🤖 v0.8.0（2026-10-27）：LLM → MCP → Multisim，让真正的 LLM 自己跑一遍
+>
+> v0.7.0 证明"后端能跑二阶电路"，但跑它的是**脚本**——脚本知道 R 取多少、
+> 知道先加元件再连线。v0.8.0 换成**一个只见过 `tools/list` 的 LLM Agent**，
+> 5 个任务、**128 次工具调用、11 次真实 Multisim 仿真**：
+>
+> | 阶段 | 任务 | 调用 | 报错 | 结果 |
+> | --- | --- | --- | --- | --- |
+> | 一 | 一阶 RC，fc≈500 Hz | 15 | 0 | 增益误差 **−0.261%**、相位 −0.072° |
+> | 二 | 二阶 RC，fc≈2 kHz | 31 | 0 | 增益误差 **−0.0594%**、相位 −0.1025° |
+> | 三-1 | 缺参数（注入） | 14 | 1 | 一次恢复，无重复 |
+> | 三-2 | 错误探针名 | 16 | 1 | 一次恢复，无重复 |
+> | 三-3 | 不支持的拓扑 | 52 | 1 | 识别边界 + 拆解验证，误差 **1e-5** |
+>
+> **3 次报错全部一次自愈，0 次重复同类错误，0 个编造的数字。**
+>
+> 更值钱的是它挖出**三个我们自己测不出来的 API 缺陷**：
+>
+> | 缺陷 | 后果 | v0.8.0 |
+> | --- | --- | --- |
+> | `measure` 的 gain 按**探针添加顺序**配对 | 先加输出探针 → `gain = 1/真值`、相位反号，而 `mode="ratio"` 看起来很权威 | 改成按拓扑（源正极网 / `out_net`）配对，新增 `pairing` 字段 |
+> | `simulate.start` 静默失效 | 传了不报错也不生效，启动暂态混进拟合窗 | 真的裁窗口（`start=3ms` → CSV 从 3 ms 起） |
+> | `topology.supported` 混了两件事 | "布局不会摆"和"线没接完"分不清 | 新增 `complete` / `issues` |
+>
+> 前两个都是**脚本测试永远碰不到**的：脚本按自己的顺序调用，"先加输入探针"这个
+> 隐含假设从没被打破。LLM 不看你的脚本。
+>
+> 👉 [完整报告：任务原文 + 5 轮 trace + 报错原文 + 修复回归](docs/agent-acceptance-v0.8.md)
+>
+> 回归：`test_mcp_session` **113/113**（新增 17 项）、`test_layout` 51/51、
+> 真机回归（反向探针顺序）gain 从 **1.104183** 修成 **0.979043**（理论 0.979173）。
+>
+> ---
+>
+> ## 🌿 v0.7.0（2026-10-26）：P2 分支感知布局 —— 让二阶电路真的跑起来
+>
+> v0.6.1 的第二次 Agent 验收卡在一个很具体的地方：Agent **正确建出了**
+> 二阶 RC 梯形（6 元件 / 4 网络 / 2 探针，零错误），但 `simulate` 报
+> `LAYOUT_UNSUPPORTED` —— 后端布局只认单链。
+>
+> v0.7.0 把布局拆成两步，**拓扑判断先于坐标布局**：
+>
+> ```
+> Circuit IR → layout.analyze() → Topology → layout.plan() → 坐标
+> ```
+>
+> | 项 | 结果 |
+> | --- | --- |
+> | 支持的拓扑 | `shunt_load` / `series_chain` / `divider` / `bypass` / `tee` / `ladder` |
+> | 明确拒绝 | 真正的并联支路（`fork`）、并联到地（`parallel_shunt`）、悬空（`island`）、环路、多电源 |
+> | 同一个 `run_task2.py`（一行没改） | 第 17 步 `simulate` 从**被拒**变成**跑出数** |
+> | 二阶 RC 实测 | 增益 **0.583062**、相位 **−64.705°**（理论 0.584342 / −64.581°，误差 −0.219% / −0.123°） |
+> | 状态快照新增 `topology` | Agent 能在 `simulate` 之前就看到后端怎么理解它的电路 |
+>
+> 回归：`test_layout` **51/51**（新增）、`test_mcp_session` **96/96**、
+> MCP 真实协议验收 **56/56**、`test_mssafe` 4/4、`test_nl2ir` 59/59、
+> `ir_run` 增益 Δ=**0.00e+00**。
+>
+> 顺带踩到一个真 bug 并写进文档：坐标不影响网表，但**导线横穿别的符号框**
+> 会让 Multisim 少认一个探针通道（表现为"仿真成功但只有一个通道有数"）。
+> 详见 [docs/layout.md](docs/layout.md) 第 6 节。
+>
+> ---
+>
+> ## 🧹 v0.6.2（2026-10-26）：API 一致性修整 —— 让 Agent 不用猜
+>
+> v0.6.1 的验收证明了「Agent 能用」，但也暴露了 3 处**同一个概念两套命名**。
+> v0.6.2 只做清账，不碰 `ir_sim` / `ir_compile` / `msbuild` / `mssafe`：
+>
+> | 问题 | 修法 |
+> | --- | --- |
+> | `measure` 用 `P1` 作键、`get_waveform` 用 `V(探针1)` 作键 | 统一 **`probe_id`**，两个工具入参和 `channels` 键完全一致 |
+> | `get_waveform` 描述写"输出名"、实际只收探针名 | 改 `probe_id`，传错会直接告诉你该传什么 |
+> | `context` 的 `available` 有时是数组、有时是对象 | 定死字段词表：**同名字段永远同类型** |
+> | `params` 暴露了 Multisim 参数序号 | 入参只认 `parameters={"frequency": 1000}`，传 `params` 直接报错 |
+> | 没有 `get_circuit` | 新增第 8 个工具，只读取回电路状态 |
+> | `simulate` 阻塞 30 s 无信息 | 返回 `timing`（layout/compile/run）+ 软 `timeout` |
+>
+> 回归：`test_mcp_session` **78/78**、MCP 真实协议验收 **55/55**、
+> `test_mssafe` 4/4、`test_nl2ir` 59/59、`ir_run` 增益 Δ=**0.00e+00**。
+>
+> ---
+>
+> ## 🎬 v0.6.1（2026-10-26）：Agent Acceptance Test —— 外部 Agent 自己设计并仿真一个电路
+>
+> 一个只读过 MCP `tools/list`、不知道 Multisim 任何内部概念的外部 Agent，拿到一句需求：
+> **"1V/1kHz 正弦，设计 fc≈500Hz 的一阶 RC 低通，跑瞬态，报实际幅值 / 理论幅值 / 误差"**。
+> 它自己选了 R=10 kΩ、C=33 nF，**13 次工具调用零错误一次通过**，
+> 输出幅值误差 **−0.577%**、相位误差 **−0.074°**，还用纯标准库从原始 CSV 独立复算出同一个增益。
+>
+> 👉 [完整案例：题目 + 电路图 + 波形图 + 13 次调用轨迹 + 8 个 API 问题](https://github.com/A3-77/multisim-14.3-ai-automation/releases/tag/v0.6.1-agent-acceptance)
+>
+> ---
+
+> ## ✅ v0.6.0（2026-10-26）：MCP Tool API —— 从"脚本"变成"能被调用的工具"
+>
+> v0.5.0 之前这条链是**脚本**：`nl_run.py --file xxx.txt`，一步焊死一步。
+> v0.6.0 把它拆成 **7 个有状态关系的工具**，任何 Agent 都能一步步建电路：
+>
+> ```
+> create_circuit ──► circuit_id
+>                        │
+>       ┌────────────────┼────────────────┐
+>       ▼                ▼                ▼
+>  add_component     connect         add_probe
+>       └────────────────┼────────────────┘
+>                        ▼
+>                    simulate ──► sim_id
+>                        │
+>               ┌────────┴────────┐
+>               ▼                 ▼
+>            measure         get_waveform
+> ```
+>
+> **1. 不是"把 Python 函数套一层 MCP"**
+>
+> 分了两层：`mcp_server.py` 只做 JSON-RPC 收发（薄到没分支逻辑），
+> `circuit_session.py` 是真正的业务层 —— 电路句柄、语义参数映射、
+> 唯一性检查、自动网络命名、**自动布局**、分析类型匹配、结构化错误。
+> 会话层能单独测试：`test_mcp_session.py` 78 项，不需要 Multisim。
+>
+> **2. Agent 永远看不到 Multisim**
+>
+> 传的是 `value=1.0, frequency=1000`，落到 IR 里是 `params={5: 1000.0}`。
+> 返回时又翻回 `"parameters": {"frequency": 1000.0}`。
+> 不传坐标 —— 布局由 `simulate` 时的 `plan_layout()` 按拓扑算。
+> schema 里做过自动检查：没有 `CiID` / `CiPort` / `CIITSymbolComp` / `SimState`。
+>
+> **3. 拓扑不支持就报错，不硬排**
+>
+> 第一版只支持单电源串联链到地（坐标是 v0.3.0/v0.5.0 真机验证过的那套）。
+> 并联会返回 `LAYOUT_UNSUPPORTED` 并指出分叉在哪：
+> `网络 'in' 有 2 个分支（R1.1, R2.1）`。
+>
+> **4. 错误是给 Agent 自纠用的**
+>
+> 每个错误都有 `code` / `message` / `hint` / `context`：
+>
+> ```json
+> {"code": "ANALYSIS_NOT_SUPPORTED",
+>  "message": "AC_VOLTAGE 不支持 dc（当前后端只验证过 transient）",
+>  "hint": "把 analysis 改成 'transient'，或者把源换成支持 'dc' 的类型。",
+>  "context": {"supported": ["transient"]}}
+> ```
+>
+> **5. 实测：MCP 链路和中文链路给出同一个答案**
+>
+> | | 增益 | 相位 |
+> | --- | --- | --- |
+> | MCP（`tools/mcp_client.py`） | **0.706316** | **−45.065°** |
+> | 中文（`tools/nl_run.py`） | 0.70632 | −45.06° |
+> | 理论 | 0.70745 | −44.97° |
+>
+> 直流：`V(source)=5.000000`、`V(ground)=0.000000`、`R=1000.0`（Multisim `RLCValue`）、
+> `I=0.005000 A`。**56 项断言全过**，走的是真实 MCP 协议（起子进程、JSON-RPC）。
+>
+> 细节：**`docs/mcp.md`**
+>
+> ---
+>
+> ## ✅ v0.5.0（2026-10-26）：直流静态电路 —— 一个假问题，一个真根因
+>
+> 用户最初给的验收句终于跑通了：
+>
+> > **"创建一个 5V 直流电源串联 1kΩ 电阻接地，并测量电阻两端电压。"**
+>
+> ```
+> V(in)=5.000000 V   V(0)=0.000000 V   V_R=5.000000 V
+> R=1000.0 Ω（Multisim RLCValue 报的）  I=V_R/R=0.005000 A
+> ```
+>
+> **1. "直流取不到数"是误诊**
+>
+> 老结论说"纯电阻回路没有动态元件，瞬态立刻结束，`EnumOutputs()` 为空"。
+> 实测推翻：`DC_POWER + R + GND` 的瞬态跑满 **1200 点**，每点都是 5.000000 V。
+> 当年"并一个 1pF 电容才跑得起来"绕的不是仿真引擎。
+>
+> **2. 真根因：`EnumOutputs` 不能调第二次**
+>
+> 二分实验（`out/dc/bisect.py`，一个 case 一个进程）：
+>
+> | case | 多了什么 | 枚举到 | 读数 |
+> | --- | --- | --- | --- |
+> | P0–P3 | run **之前**枚举 / `EnumComponents` / `RLCValue` | 2 | 正常 |
+> | **P4** | **run 之后、read 之前再枚举一次** | **0** | **全部 E_FAIL** |
+>
+> `E_FAIL` 不是"电路死了"，是**句柄被自己作废了**。
+> 现在 `EnumOutputs` 只在 open 后调一次、缓存名字，`simulate()`（AC 内核）
+> 本来就是这么写的，**一行没改**。
+>
+> **3. 两条路读数完全一致**
+>
+> 同一个 `out/dc/dc_min.ms14`，`transient`（1200 点/探针）与
+> `DoDCOperatingPoint`（1 点/探针）给出同样的 5.0 / 0.0 / 5.0 / 1000.0 / 0.005。
+> 默认走 dcop —— 静态电路没有时间维度，不该让用户看到一条平的"波形"。
+>
+> **4. 电流的来源不糊弄**
+>
+> Multisim 电压探针只给电压。`I = V_R / R`，`V_R` 是探针实测，
+> `R` 是 Multisim 自己 `RLCValue` 报的 1000.0（不是从 IR 抄的），
+> 顺带验证了 IR 写的值和 Multisim 读到的一致。**没有假装用了电流探针。**
+>
+> 细节与复现步骤：**`docs/dc-static.md`**
+>
+> ---
+>
+> ## ✅ v0.4.0（2026-10-26）：一句话生成电路
+>
+> v0.3.0 把中间层立起来了，但入口还是 JSON。v0.4.0 接上了最上面那一环：
+>
+> **中文 → Circuit IR → msbuild → `.ms14` → Multisim → COM → 拟合 → 与理论比对**
+>
+> **1. `nl2ir`：规则解析器，不是 LLM**
+>
+> 同一句话必须永远解析成同一份 IR，否则下游结果不可复现、回归测试无从谈起。
+> 46 项解析测试（`tools/test_nl2ir.py`）不需要 Multisim，毫秒级跑完。
+>
+> 数值归属用的是"连续短语"而不是"最近距离"——`电阻、1kΩ 电阻` 这种并列写法
+> 里，最近距离会对称歧义，连续短语不会。
+>
+> **2. 不猜**
+>
+> 缺频率、缺阻值、并联拓扑、白名单外元件、`把 R1 改成 2kΩ`（修改已有电路）——
+> 一律报错，并说清缺什么、该怎么改。猜错一个值，电路照样能生成、能跑仿真，
+> 但结论是错的。"看起来能跑"比"直接报错"危险得多。
+>
+> **3. 实测：中文链路与手写 API 链路逐位相同**
+>
+> | 检查项 | 结果 |
+> | --- | --- |
+> | 中文 → IR | 4 元件 / 3 网络 / 2 探针，`validate()` 无错 |
+> | 与 `examples/rc_lowpass.ir.json` | 语义**完全一致**（字段逐个相等） |
+> | Multisim 注册探针 | `['V(探针1)', 'V(探针2)']` |
+> | 增益 | **0.70632** / 理论 0.70745 |
+> | 相位 | **−45.06°** / 理论 −44.97° |
+> | 与直接 `add_part` 基线 | 增益 Δ=0.00e+00，相位 Δ=0.000° |
+>
+> 换一组元件和频率再验一次（100mV / 2kHz / 2.2kΩ / 100nF，fc=723 Hz）：
+> 增益 0.33918 / 理论 0.34015，相位 −70.17° / 理论 −70.11°。
+> 两句话都是**真跑 Multisim**，不是推算。
+>
+> ---
+>
+> ## ✅ v0.3.0（2026-10-26）：从「逆向格式」转向「做生成器」
+>
+> v0.2.0 解决了"生成的电路能不能仿真"。v0.3.0 解决的是"能不能**复用**"：
+> 不再一个一个手写元件拼电路，而是有统一元件 API 和一层电路中间表示。
+>
+> **1. 探针唯一命名（多探针重名的根因）**
+>
+> `CiProbeExtComp@LocalName` 就是 COM `EnumOutputs()` 里名字的来源，
+> 规则是 `LocalName = IRPrefix + IRNumber`。克隆时照抄 donor 的名字，
+> 两个探针就同名 → `RequestOutput` 分不开 → 读回报「未指定的错误」。
+> 序号唯一化后实测 `['V(探针1)', 'V(探针2)']`，两条读数各自正确。
+>
+> **2. 统一元件 API**
+>
+> ```python
+> a.add_part("RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0, x=500, y=300)
+> ```
+>
+> 调用方不碰任何 XML ID，按 `(family, part)` 从真实 `.ms14` 里解析模板。
+> 已覆盖：DC/正弦源、`RESISTOR_VIRTUAL`、`CAPACITOR_VIRTUAL`、`GROUND`、探针。
+>
+> **3. RC 低通：三点频响全部对上理论**
+>
+> | 频率 | 实测增益 | 理论 \|H\| | 实测相位 | 理论 ∠H |
+> | --- | --- | --- | --- | --- |
+> | 100 Hz | 0.99520 | 0.99505 | −5.66° | −5.71° |
+> | 1 kHz | 0.70632 | 0.70745 | −45.06° | −44.97° |
+> | 10 kHz | 0.10015 | 0.09960 | −84.43° | −84.28° |
+>
+> 三点连成斜率 ⇒ 电容真的在参与。若是静态假数据，增益会是一条平线。
+>
+> **4. Circuit IR：自然语言 → IR → msbuild → .ms14 → 仿真**
+>
+> 一份纯 JSON 描述电路，里面没有任何 Multisim 概念。端到端验收结果与
+> **直接调用 `add_part` 完全一致**（增益 Δ=0、相位 Δ=0.000°），
+> 说明 IR 层没有引入任何偏差。编译前先跑 `validate()`，
+> 错误在写盘之前拦住（26 个反向用例）。
+>
+> ---
+>
+> ## v0.2.0（2026-10-26）：找到并修掉真正的根因
+>
+> **根因：`CIITDiagram@SimState` 属性里存着多行仿真状态文本，XML 规范要求
+> 解析时把属性值里的换行归一化成空格，`xml.etree.ElementTree` 照做 →
+> 仿真配置被压平 → Multisim 读不回分析设置 → 只剩电源在动，R/C 全部开路。**
+>
+> 表现就是长期被误判成「克隆的电阻是开路的」的那个现象：电源电压还在、
+> 电阻电流恒 0、部分输出读不出来。
+>
+> 三行证据（同一份原生文件，逻辑零改动）：
+>
+> | 版本 | V(PR1) | I(PR1) | 可读输出 |
+> | --- | --- | --- | --- |
+> | 原生 | 84 V | **13.9977 A** | 8/8 |
+> | 只重打包容器（XML 字节不动） | 84 V | **13.9977 A** | 8/8 |
+> | 仅 ET 解析 + 序列化 | 84 V | **0 A** | 3/8 |
+>
+> 修复：新增 `tools/mssafe.py`，解析前把属性值内部的 `\r\n\t` 换成 ASCII
+> 占位符，序列化后还原；`msmodel.Circuit` 的读写全部改走它。
+> 回归测试 `tools/test_mssafe.py`：4 个原生样本往返**逐字节一致**。
+>
+> ### 验收结果（全部实测，非推断）
+>
+> | 用例 | 期望 | 实测 | 结论 |
+> | --- | --- | --- | --- |
+> | `out/ref/acceptance.ms14`（探针在源网） | 5.0 V 恒定 | **5.0 V**，极差 1.8e-15，2000 点 | ✅ |
+> | `out/ref/acceptance_divider.ms14`（探针在分压中点） | 2.5 V 恒定 | **2.5 V**，极差 1.3e-15，2000 点 | ✅ |
+> | `RLCValue('R1')` | 1000 Ω | **1000.0 Ω** | ✅ |
+>
+> **分压器中点读到 2.5 V，是电阻真的在导通的直接证据**——这正是 v0.1.0 里
+> 缺的那一环。探针在源网只证明电源在，中点 2.5 V 才证明 R1/R2 进了 SPICE 网表。
+>
+> 同时被证伪的几个假设（详见 `docs/deadends.md`）：
+> `CIITLinkComp@NodeText` / `CODNodeTextComp` 网络分组、`CODPinComp` 交汇结点
+> （junction）、`CSCH_CAPVirtualComponentPin@lastnet`、`CIITPinSymbolComp@PortID`
+> 重复、虚拟元件缺 `Model` 属性、`doubles` 与 `parameters` 布局、供体文件损坏。
+> **这些都不是原因。** 3 引脚中点不需要任何结点对象，实测 2.5 V。
+>
+> 验证记录：[`docs/p0-acceptance.md`](docs/p0-acceptance.md) ·
+> JSON：[`out/p0_validation.json`](out/p0_validation.json) ·
+> 波形：[`out/p0_waveform_source.csv`](out/p0_waveform_source.csv)、
+> [`out/p0_waveform_divider.csv`](out/p0_waveform_divider.csv)
+>
+> ---
+>
+> **一句话结论：从空白电路用代码生成 `.ms14`，Multisim 能打开、能真实仿真、
+> COM 能读到正确读数——含分压器这种需要多个无源元件真正导通才能成立的拓扑。**
+
+本仓库是完整的过程记录 + 可运行代码 + ground truth 语料库，供后续 agent 接手继续研究。
+
+---
+
+## 目录
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/ms14-format.md](docs/ms14-format.md) | **`.ms14` 文件格式完整规范**：PKWARE DCL 压缩算法 + 分块容器 + 字节级细节 |
+| [docs/circuit-xml.md](docs/circuit-xml.md) | **电路 XML 对象模型**：两棵平行树、坐标系、引脚几何公式、参数存储位置 |
+| [docs/nl2ir.md](docs/nl2ir.md) | **中文 → Circuit IR**：支持的句式、解析算法、错误哲学、边界 |
+| [docs/dc-static.md](docs/dc-static.md) | **直流静态电路**：`EnumOutputs` 只能调一次的根因、两条取数路径、复现与排错顺序 |
+| [docs/mcp.md](docs/mcp.md) | **MCP Tool API**：8 个工具的输入输出、状态模型、统一返回对象、错误码、自动布局、验收 |
+| [docs/layout.md](docs/layout.md) | **分支感知布局（P2）**：拓扑判断先于坐标布局、6 类模板、拒绝规则、坐标网格、一次真实的几何 bug |
+| [docs/v0.9-diode.md](docs/v0.9-diode.md) | **v0.9 二极管闭环**：ComponentSpec 注册表、`enabled` 闸门、半波整流模板、真机实测数据、NPN 扩展评估 |
+| [docs/v0.9-component-library-assessment.md](docs/v0.9-component-library-assessment.md) | **14.3.3 升级后元件库复测**：donor 池 32 → 193、二极管/NPN/运放端到端、COM 零元件库接口 |
+| [docs/probe.md](docs/probe.md) | **探针**：结构、网络绑定方式、GUI 放置流程（已跑通） |
+| [docs/architecture.md](docs/architecture.md) | 代码架构与每个文件的职责 |
+| [docs/deadends.md](docs/deadends.md) | **死路清单 + 避坑指南**（必读，能省几十小时） |
+| [docs/next-steps.md](docs/next-steps.md) | **给接手者的路线图**：按优先级排好的待办 |
+
+---
+
+## 一、任务演进（为什么要做这件事）
+
+用户的原始诉求分三个阶段，约束越来越严：
+
+1. **阶段一**："看看能不能编程操控本机 NI Multisim 14.3，GitHub 有现成的就直接用。"
+   → 结论：GitHub 没有可用项目。做出了 COM API 封装（`msc.py`），能跑仿真、取波形、导 CSV。
+2. **阶段二**：用户明确否定了"只能跑"的成果——
+   > "为什么这么多不能的，如果只能跑的话那也不叫 ai 自动化啊 我自己也会跑啊"
+
+3. **阶段三（当前目标，死标准）**：
+   > **"不要把'能够修改已有电路'视为任务完成。必须实现'从空白电路开始，根据自然语言指令
+   > 创建一个全新的、可被 Multisim 正常打开和仿真的电路。"**
+
+   验收用例：
+   > "新建一个 5V 直流电源串联 1kΩ 电阻接地的电路，在电阻两端放电压探针并保存。"
+
+   > **"不要让 AI 把'找到 API'当成果，要把'生成一个全新的、能在 Multisim 里打开的真实电路'
+   > 作为唯一的核心验收标准。"**
+
+**当前进度：验收用例全部完成（v0.4.0）。**
+
+| 验收点 | 状态 | 证据 |
+| --- | --- | --- |
+| 从空白电路开始 | ✅ | `out/ref/blank_circuit.xml` 是空白基底，注入后 `own_blank.ms14` 能正常打开 |
+| 5V 直流电源 | ✅ | `acceptance.ms14` 里 V1，XML 值 `5.`，界面显示 `5V` |
+| 串联 1kΩ 电阻 | ✅ | R1，XML 四处值全同步，界面显示 `1kΩ`（见 `docs/shots/03_*.png`） |
+| 接地 | ✅ | GND 符号克隆自官方样例，正常渲染 |
+| 可被 Multisim 正常打开 | ✅ | 免提权启动 + 自动点弹窗 + 截图，见 `docs/shots/01_*.png` |
+| 电压探针 | ✅ | 纯代码生成，`LocalName` 序号唯一，`['V(探针1)','V(探针2)']` 可区分 |
+| 可仿真 | ✅ | RC 低通三点频响（100 Hz / 1 kHz / 10 kHz）增益与相位全部对上理论 |
+| 一句话生成电路 | ✅ | 中文 → IR → `.ms14` → 仿真，与直接 `add_part` 的基线逐位一致 |
+
+---
+
+## 二、三条技术路线与结论
+
+### 路线 A：NI 官方 COM Automation API（`MultisimInterface.MultisimApp`）
+
+**能做**：打开/保存、枚举元件、读改 R/L/C 值、跑瞬态/交流/直流分析、取波形数据、导 CSV/BOM/网表、截图。
+
+**不能做**：**放元件、拉导线、加探针**。整个 API 没有这类方法（只有 `ReplaceComponent`）。
+
+**结论**：保留为"仿真执行层"。等电路文件生成好之后，用 COM 去跑仿真、取数——这是最省事的方案，
+不需要逆向仿真引擎。
+
+关键坑：
+- **必须 32 位 Python**。CLSID `{D9CBB7A1-6AD6-438B-AD1B-42FB2DB00CAE}` 只注册在 WOW6432Node，
+  64 位进程 `CreateObject` 直接报"没有注册类"。
+- **探针 = 输出**。`EnumOutputs()` 枚举的是图纸上的探针（`V(Probe1)` 这种名字），
+  没探针就取不到数据，报错是"输出未找到。"——**所以探针是仿真取数的前置条件**，
+  这也是为什么探针必须做。
+
+代码：`msc.py` / `cli.py` / `demo.py` / `docs/api.md`（从类型库导出的 40+ 方法全表）。
+
+### 路线 B：逆向 `.ms14` 文件格式（**主线，已突破**）
+
+`.ms14` 是一个自定义压缩容器，载荷是电路 XML。破解后可以直接用代码生成/修改电路文件，
+不依赖 Multisim 运行。**这是唯一能实现"从零画电路"的路线。**
+
+详见 [docs/ms14-format.md](docs/ms14-format.md)。
+
+### 路线 C：GUI 自动化（兜底，部分跑通）
+
+当某功能纯代码暂时做不出来时，用 Win32 消息驱动 Multisim 界面完成操作（例如放探针），
+再让 Multisim 自己保存文件，然后解析保存结果反推结构。
+
+**这条路线在本项目里发挥了关键作用**：探针的 XML 结构就是这么做出来的——
+GUI 放一个探针 → 保存 → 解压 → 读 XML → 得到精确的对象结构。
+
+详见 [docs/probe.md](docs/probe.md)。
+
+---
+
+## 三、当前可运行的能力
+
+### 3.1 从零生成电路（纯代码，已验证）
+
+```bash
+cd multisim-ctrl
+python tools/build_acceptance.py      # 生成 out/ref/acceptance.ms14
+python tools/verify_open.py out/ref/acceptance.ms14 out/verify.json   # 启动 Multisim 打开并截图
+```
+
+产物 `out/ref/acceptance.ms14`（23897 字节）在 Multisim 里显示为：
+V1(5V) — R1(1kΩ) — GND，三条导线，拓扑正确，参数显示正确。
+
+### 3.2 编解码 `.ms14`（纯 Python，无第三方依赖）
+
+```python
+import sys; sys.path.insert(0, "tools")
+import dcl
+
+xml, info = dcl.read_ms14("out/ref/acceptance.ms14")   # 解压 -> 明文 XML
+print(info)   # {'total': 209101, 'chunks': 1, ...}
+dcl.write_ms14("out/copy.ms14", xml)                   # 重新打包，Multisim 认
+```
+
+压缩率实测：148367 B → 16272 B（Multisim 自己是 14481 B，我们慢 12%，但完全可用）。
+
+### 3.3 驱动 Multisim GUI 放探针
+
+```python
+import sys; sys.path.insert(0, "tools")
+import msui, guiauto as G
+
+h = msui.launch("out/ref/with_probes.ms14")   # 启动 + 点掉 3 个数据库弹窗
+G.click(178, 43)                              # 绘制 菜单
+G.click(200, 85)                              # Probe 子菜单
+G.click(427, 87)                              # 电压探针
+G.click(725, 436)                             # 点到目标网络上
+```
+
+保存后文件里确实多了探针对象（`CiProbeExtComp`）。
+
+### 3.4 统一元件 API + RC 低通（第二个验收案例，已通过）
+
+`Assembler.add_part(family, part, refdes, value=, x=, y=, params=)`
+按 `(family, part)` 从真实 `.ms14` 里找模板并克隆，**调用方不碰任何 XML ID**。
+
+```python
+import msbuild
+a = msbuild.Assembler()
+v1, _ = a.add_part("SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                   value=1.0, x=300, y=300, params={5: 1000.0})  # 1V / 1kHz 正弦
+r1, _ = a.add_part("RESISTOR",  "RESISTOR_VIRTUAL",  "R1", value=1000.0, x=500, y=300)
+c1, _ = a.add_part("CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=159e-9, x=700, y=400)
+gnd,_ = a.add_part("POWER_SOURCES", "GROUND", "0", x=300, y=420)
+
+n_in  = a.connect([(v1, "1"), (r1, "1")], name="in")
+n_out = a.connect([(r1, "2"), (c1, "1")], name="out")
+n_gnd = a.connect([(v1, "2"), (gnd, "1"), (c1, "2")], name="0")
+
+a.add_probe_ext(*a.net_vertices(n_in)[1])     # 探针必须落在导线顶点
+a.add_probe_ext(*a.net_vertices(n_out)[1])    # 序号自动唯一
+a.save("out/ref/rc_lowpass.ms14")
+```
+
+一条命令生成 + 验证：
+
+```bash
+python tools/build_rc_lowpass.py                      # 1 kHz，出 out/ref/rc_lowpass.ms14
+runtime\py32\python.exe tools/validate_rc.py out/ref/rc_lowpass.ms14 1000 main
+```
+
+**实测三点频响**（`tools/validate_rc.py` 用最小二乘拟合幅值和相位，
+不是靠找峰）：
+
+| 频率 | 实测增益 | 理论 \|H\| | 实测相位 | 理论 ∠H |
+| --- | --- | --- | --- | --- |
+| 100 Hz | 0.99520 | 0.99505 | −5.66° | −5.71° |
+| 1 kHz（≈fc） | 0.70632 | 0.70745 | −45.06° | −44.97° |
+| 10 kHz | 0.10015 | 0.09960 | −84.43° | −84.28° |
+
+`fc = 1/(2πRC) = 1001 Hz`，`R1=1000 Ω`、`C1=159 nF` 均由 Multisim 自己报回
+（`RLCValue`），不是我们写的值。
+
+这是**一阶低通的教科书曲线**，也证明了输出不是静态假数据：如果电容没真正
+参与，三点增益会是一条平线。
+
+### 3.5 Circuit IR：电路中间表示层
+
+自然语言 → **Circuit IR** → `msbuild` → `.ms14` → Multisim → COM → 结果
+
+IR 是一份纯 JSON，只描述「有哪些元件、谁和谁连、探针放哪、怎么仿真」，
+里面**没有任何** Multisim 概念（没有 CiID / CiPort / CIITSymbolComp /
+Transformer / CiaParamList）。
+
+```json
+{
+  "components": [
+    {"refdes": "V1", "family": "SIGNAL_VOLTAGE_SOURCES", "part": "AC_VOLTAGE",
+     "value": 1.0, "params": {"5": 1000.0}, "position": [300, 300]},
+    {"refdes": "R1", "family": "RESISTOR", "part": "RESISTOR_VIRTUAL",
+     "value": 1000.0, "position": [500, 300]}
+  ],
+  "nets": [
+    {"name": "in",  "pins": ["V1.+", "R1.1"]},
+    {"name": "out", "pins": ["R1.2", "C1.1"]}
+  ],
+  "probes": [{"refdes": "P1", "net": "in"}, {"refdes": "P2", "net": "out"}],
+  "simulation": {"analysis": "transient", "stop": 0.006, "sample_rate": 200000}
+}
+```
+
+用「网络 → 引脚列表」而不是「引脚对 → 引脚对」，是因为前者天然表达多引脚
+网络（T 型交汇），不需要额外的结点对象。
+
+```bash
+python tools/ir_compile.py examples/rc_lowpass.ir.json -o out/ref/rc_lowpass_ir.ms14
+runtime\py32\python.exe tools/ir_run.py examples/rc_lowpass.ir.json
+```
+
+**端到端验收结果**（`tools/ir_run.py`）：
+
+| 检查项 | 结果 |
+| --- | --- |
+| IR → `.ms14` | 成功（31752 字节） |
+| Multisim 打开并注册探针 | `['V(探针1)', 'V(探针2)']` |
+| 输入幅值（IR 声明 1 V） | 0.99679 |
+| 增益 | 0.70632 / 理论 0.70745 |
+| 相位 | −45.06° / 理论 −44.97° |
+| 与直接 `add_part` 基线对比 | 增益 Δ=0，相位 Δ=0.000° |
+
+最后一行是重点：**IR 链路和手写 API 链路给出完全相同的答案**，
+说明 IR 层没有引入任何偏差。
+
+编译前会跑 `CircuitIR.validate()`，任何错误都在写盘**之前**拦住
+（`tools/test_ir_validate.py` 有 26 个反向用例）：
+
+```python
+c = CircuitIR.load("examples/rc_lowpass.ir.json")
+errs = c.validate()      # [] 表示合法
+if errs: raise SystemExit("\n".join(errs))
+```
+
+校验覆盖：refdes 唯一 / 元件型号在白名单 / 引脚存在 / 连接引用有效 /
+同一引脚不能属于两条网络（别名会先归一化再判重）/ 探针目标存在 /
+仿真参数合法 / 采样点足够。
+
+### 3.6 中文 → Circuit IR：一句话生成电路（v0.4.0）
+
+```bash
+# 只解析（不需要 Multisim，任意 Python）
+python tools/nl2ir.py "1V 1kHz 正弦源，经过 1kΩ 电阻后接 159nF 电容到地，在输入和输出各放一个探针" \
+    -o out/nl/demo.ir.json
+
+# 端到端：解析 → 编译 → Multisim 瞬态 → 拟合 → 与理论比对（必须 32 位 Python）
+runtime\py32\python.exe tools/nl_run.py --file examples/nl/rc_lowpass.txt
+```
+
+`nl_run.py` 会先把"我理解成什么"打印出来，再往下走：
+
+```
+[1] 中文 -> Circuit IR
+  我理解成：V1 是 1 V / 1000 Hz 正弦源；R1 是 1000Ω；C1 是 1.59e-07F；
+           串联顺序 V1.+ → R1 → C1 → 地；网络 in = V1.+ + R1.1；网络 out = R1.2 + C1.1；
+           网络 0 = V1.- + GND1.1 + C1.2；探针 P1@in、P2@out；仿真 transient，0~0.006 s
+  · 仿真时长：未指定 → 6 个周期 = 0.006 s
+  · 采样率：未指定 → 200 × 频率 = 200000 Hz
+```
+
+实测（真跑 Multisim 14.3）：
+
+| 电路 | 增益 | 理论 \|H\| | 相位 | 理论 ∠H |
+| --- | --- | --- | --- | --- |
+| 1 V / 1 kHz / 1 kΩ / 159 nF（fc=1001 Hz） | 0.70632 | 0.70745 | −45.06° | −44.97° |
+| 100 mV / 2 kHz / 2.2 kΩ / 100 nF（fc=723 Hz） | 0.33918 | 0.34015 | −70.17° | −70.11° |
+
+第一行的增益/相位与**直接调用 `add_part` 的基线逐位相同**（Δ=0.00e+00 / Δ=0.000°）。
+
+解析层的反向用例（59 项，`tools/test_nl2ir.py`）：缺频率 / 缺阻值 / 并联 /
+电感 / 运放 / 直流源带频率 / 交流分析 / 探针位置不明 / 修改已有电路 —— 全部在
+生成任何文件之前报错。详细语法与算法见 [docs/nl2ir.md](docs/nl2ir.md)。
+
+### 3.7 直流静态电路：V1 → R1 → 地（v0.5.0）
+
+```bash
+# 最小电路（只调已验证的 add_part / connect / add_probe_ext）
+python tools/build_dc.py                       # -> out/dc/dc_min.ms14
+
+# 两条取数路径各跑一次
+runtime\py32\python.exe -u tools/dc_run.py --mode transient
+runtime\py32\python.exe -u tools/dc_run.py --mode dcop
+
+# 中文端到端
+runtime\py32\python.exe -u tools/nl_run.py --file examples/nl/dc_5v.txt
+```
+
+输入：`创建一个 5V 直流电源串联 1kΩ 电阻接地，并测量电阻两端电压。`
+
+```
+[1] 中文 -> Circuit IR
+  我理解成：V1 是 5 V 直流源；R1 是 1000Ω；串联顺序 V1.+ → R1 → 地；
+           网络 in = V1.+ + R1.1；网络 0 = V1.- + GND1.1 + R1.2；
+           探针 P1@in、P2@0；仿真 dc（直流工作点，单点）
+
+[3] Multisim 直流工作点
+  outputs: ['V(探针1)', 'V(探针2)']
+
+[4] 读数
+  net in -> V(探针1)  V=5.000000 V
+  net 0  -> V(探针2)  V=0.000000 V
+  电阻电压 5.000000 V，R=1000 Ω（Multisim RLCValue），I=0.005000 A
+```
+
+两条路径的读数**完全一致**：
+
+| | `transient` | `DoDCOperatingPoint` |
+| --- | --- | --- |
+| 每个探针的采样点 | 1200 | 1 |
+| `V(in)` / `V(0)` | 5.000000 / 0.000000 | 5.000000 / 0.000000 |
+| `V_R` | 5.000000 | 5.000000 |
+| `R`（Multisim 报的） | 1000.0 | 1000.0 |
+| `I = V_R / R` | 0.005000 A | 0.005000 A |
+
+**电流不是理想电流探针测的**：Multisim 电压探针只给电压，`I` 是 `V_R / R`，
+其中 `R` 是 Multisim 读回来的实际阻值（`r_source="multisim"`，顺带验证 IR 写的 1000 与读回的一致）。
+
+> ⚠️ **踩过的坑**：`EnumOutputs()`（`circ.probes()`）只能在 open 之后调一次。
+> 在 `run()` 之后、`read()` 之前再枚举一次，会让之后所有 `GetOutputData()`
+> 返回 `E_FAIL`，表现像"电路死了"。完整二分证据见 [docs/dc-static.md](docs/dc-static.md)。
+
+### 3.8 MCP Tool API：让 Agent 一步步建电路（v0.6.0 → v0.7.0）
+
+```bash
+# 起 server（必须 32 位 Python，COM 限制）
+runtime\py32\python.exe -u tools\mcp_server.py
+
+# 确定性验收：起子进程、走真实 MCP 协议、建 RC 与 DC 两个电路
+python tools\mcp_client.py
+
+# 纯逻辑测试（不需要 Multisim）
+python tools\test_mcp_session.py      # 96 项（会话层）
+python tools\test_layout.py           # 51 项（拓扑 + 坐标）
+```
+
+一次 RC 低通的完整调用序列（`tools/mcp_client.py` 里就是这么写的）：
+
+```
+create_circuit(name="rc_lowpass_mcp")                       -> c-a580bc84c8
+add_component(SIGNAL_VOLTAGE_SOURCES, AC_VOLTAGE, V1, 1.0, parameters={"frequency": 1000})
+add_component(RESISTOR, RESISTOR_VIRTUAL, R1, 1000)
+add_component(CAPACITOR, CAPACITOR_VIRTUAL, C1, 159e-9)
+add_component(POWER_SOURCES, GROUND, GND1)
+connect([["V1","+"], ["R1","1"]])                           -> 自动命名 "in"
+connect([["R1","2"], ["C1","1"]])                           -> 自动命名 "n1"
+connect([["C1","2"], ["V1","-"], ["GND1","1"]])             -> 自动命名 "0"
+add_probe("in")                                             -> P1
+add_probe("R1.2")                                           -> P2（引脚自动解析成网络）
+get_circuit()                                               -> 随时只读取回当前状态
+simulate()                                                  -> transient, sim_id, timing
+measure(probe_id="P2")                                      -> 增益 0.706316 / 相位 -45.065°
+get_waveform(probe_id="P2")                                 -> channels 的键同样是 "P2"
+```
+
+**探针只有 `probe_id` 一个身份。** `P1` 是唯一语义 ID，`measure` / `get_waveform`
+的入参和 `channels` 的键都用它；`label`（`探针1`）/ `output`（`V(探针1)`）
+只是 Multisim 那边的只读旁证，用来在界面上核对，不用来传参。
+
+`simulate` 内部依次做：算布局 → 写回 IR → `validate()` → 编译 `.ms14` →
+开 Multisim → 读探针 → 落盘。**Agent 不需要给坐标，也不需要知道
+`CiID` / `CiPort` / `SimState` 这些词。**
+
+错误是结构化返回的，带 `hint` 和 `context`，LLM 接进来之后能自己纠正：
+
+```json
+{"ok": false, "error": {
+  "code": "ANALYSIS_NOT_SUPPORTED",
+  "message": "AC_VOLTAGE 不支持 dc（当前后端只验证过 transient）",
+  "hint": "把 analysis 改成 'transient'，或者把源换成支持 'dc' 的类型。",
+  "context": {"analysis": "dc", "source_part": "AC_VOLTAGE", "supported": ["transient"]}}}
+```
+
+工具表、错误码全表、自动布局规则见 [docs/mcp.md](docs/mcp.md)。
+
+### 3.9 Agent Acceptance Test：外部 Agent 自己设计电路（v0.6.1）
+
+MCP 建好之后，做了一次**不看源码的验收**：一个只读过 `tools/list`、
+不知道 Multisim 任何内部概念的外部 Agent，拿到一句需求：
+
+> 创建一个 1V、1kHz 的正弦输入，设计一个截止频率约为 500Hz 的一阶 RC 低通滤波器。
+> 请自行选择合适的电阻和电容值，创建 Multisim 电路，进行瞬态仿真，
+> 并告诉我输出端的实际幅值、理论幅值以及误差。
+
+它自己选了 R=10 kΩ / C=33 nF（E12 标准值，fc=482.3 Hz），
+**13 次工具调用零错误一次通过**，仿真 29.7 s 后报出：
+
+| 项 | 实测 | 理论 | 误差 |
+| --- | --- | --- | --- |
+| 输出幅值 | 0.431897 V | 0.434405 V | **−0.577 %** |
+| 增益 | 0.433288 | 0.434405 | −0.257 % |
+| 相位 | −64.327° | −64.253° | **−0.074°** |
+
+并且它用纯标准库自己写最小二乘，从原始 1200 点 CSV 复算出同一个增益 ——
+证明 `measure` 不是在编数。
+
+![电路](docs/case/agent_rc_500hz_circuit.png)
+
+完整案例（题目、截图、13 次调用轨迹、8 个 API 问题）见
+[docs/case/agent-acceptance-rc-500hz.md](docs/case/agent-acceptance-rc-500hz.md)，
+逐项报告见 [out/agent_test/AGENT_ACCEPTANCE_REPORT.md](out/agent_test/AGENT_ACCEPTANCE_REPORT.md)。
+
+> 顺带暴露了一个真问题：Multisim 的 `GetCircuitImage` 对我们生成的 `.ms14`
+> **画不出 V1/C1 符号**（自带样例正常，让 Multisim 自己另存再打开也一样）。
+> 不影响仿真，但影响"给人看"，已记为待修项。
+
+### 3.10 P2 分支感知布局：二阶 RC 真的跑起来了（v0.7.0）
+
+第二次 Agent 验收（3.9 之后的二阶题）暴露的不是 API 问题，而是**后端布局**：
+
+```json
+{"code": "LAYOUT_UNSUPPORTED",
+ "message": "网络 'n1' 有 2 个分支（C1.1, R2.1）",
+ "hint": "第一版只支持串联链；并联 / 多支路的布局还没验证过。",
+ "context": {"net": "n1", "branches": ["C1.1", "R2.1"]}}
+```
+
+v0.7.0 把 `plan_layout()` 换成 `layout.py`，并把两件事分开：
+
+- `analyze()` —— 纯图论，判断"这是什么拓扑、属于哪个模板"，不认识坐标；
+- `plan()` —— 只算坐标，不认识电路语义。
+
+**同一个 `out/agent_test2/run_task2.py`，一行没改**，第 17 步直接跑通：
+
+| 项 | 实测 | 理论 | 误差 |
+| --- | --- | --- | --- |
+| R1 / R2 | 10 kΩ / 10 kΩ | — | E12 标准值 |
+| C1 / C2 | 8.2 nF / 8.2 nF | — | E12 标准值 |
+| fc | 1940.914 Hz | 目标 2000 Hz | −2.95%（设计偏差） |
+| 输出幅值 | 0.581193 V | 0.584342 V | — |
+| 增益 | **0.583062** | **0.584342** | **−0.219 %** |
+| 相位 | **−64.705°** | **−64.581°** | **−0.123°** |
+
+后端自己给出的拓扑判断（`get_circuit` / `simulate` 都带 `topology`）：
+
+```json
+{"kind": "ladder", "n_series": 2, "n_shunt": 2, "out_net": "n2",
+ "stages": [{"index": 0, "net": "in", "series": "R1", "shunt": null},
+            {"index": 1, "net": "n1", "series": "R2", "shunt": "C1"},
+            {"index": 2, "net": "n2", "series": null, "shunt": "C2"}],
+ "supported": true}
+```
+
+三引脚节点 `n1` 现在是**正常的一级**，不再是异常。
+
+完整设计（支持的 6 类模板、拒绝规则、坐标网格、一次真实的几何 bug）见
+[docs/layout.md](docs/layout.md)，逐项报告见
+[out/agent_test2/REPORT.md](out/agent_test2/REPORT.md)。
+
+### 3.11 元件注册表 + 二极管半波整流（v0.9.0）
+
+v0.8.0 之前，支持哪些元件是**代码里的字面量**：
+
+```python
+# tools/circuit_ir.py（v0.8.0）
+SUPPORTED = {
+    "VSOURCE/DC":   {"pins": ("+", "-"), ...},
+    "RESISTOR/R":   {"pins": ("1", "2"), ...},
+    ...
+}
+```
+
+v0.9.0 拆成两层，中间隔一个 `enabled` 闸门：
+
+```
+build_registry.py  →  registry/components.json  →  registry.py  →  circuit_ir / circuit_session
+（离线扫 .ms14）        （192 条 parts + enabled）    （运行时，纯 JSON）
+```
+
+```jsonc
+{
+  "enabled": ["DIODE/1N4007G"],        // ← 闸门：Agent 能用的只有这里列的
+  "parts": {
+    "DIODE/1N4007G": {
+      "pins": ["A", "K"],
+      "pin_geometry": {"A": [279, 297], "K": [279, 243]},   // 从 donor 里量出来的
+      "pin_extent": [0, 54],
+      "orientation": "vertical",                           // 二极管符号是竖直的
+      "spice_template": "d%p %tA %tK %m",
+      "refdes_prefix": "D",
+      "donor": {"file": "corpus/samples14/Fuente capacitiva final.ms14",
+                "refdes": "D2", "in_repo": true}
+    }
+  }
+}
+```
+
+**`parts` 里有 192 条，不代表支持 192 种。** `parts` 只说明"donor 存在、引脚抽得出来"。
+真正放开一种元件要做三件事：① `enabled` 加一行；② 布局有模板；③ 有测试。
+这一轮只做了 `DIODE/1N4007G` 一种，只放开一种拓扑：
+
+```
+V1 → D1(A→K) → R1 → GND        半波整流
+```
+
+`layout.analyze()` 里 `halfwave_rectifier` 必须排在 `divider` 之前判（否则会被认成分压器），
+然后 `_check_diode_topology()` 用 5 条理由拒绝其他所有二极管用法：
+
+| 拒绝码 | 什么情况 |
+| --- | --- |
+| `diode_multiple` | 不止一个二极管（桥式、全波都不支持） |
+| `diode_with_capacitor` | 带滤波电容（那是峰值检测，另算） |
+| `diode_template_unverified` | donor 的 SPICE 模板不是 `d%p %tA %tK %m` 形态 |
+| `diode_not_first_series` | 二极管不在第一级串联位 |
+| `diode_load_not_resistor` | 负载不是电阻 |
+
+`measure()` 遇到这个拓扑走 `_measure_rectifier()`，不做正弦拟合，直接给整流该看的量：
+
+```jsonc
+{"mode": "rectifier", "v_out_peak": 4.3696, "v_out_min": -0.00010,
+ "v_out_mean": 1.3051, "vf_deep_on": {"mean": 0.6200, "std": 0.0036, "n": 2042},
+ "reverse_block_max": 0.00111, "conduction_frac": 0.4861,
+ "bracket": {"v_dc": {"lo": 1.2775, "hi": 1.5895, "measured": 1.3051, "inside": true, "pos": 0.089}}}
+```
+
+`bracket` 是这轮被真机数据逼出来的：`Vdc = Vm/π − Vf/2` 这个恒定压降模型
+**只在深导通区成立**，实测导通占比 0.4861 比模型预测的 0.4573 高 2.87 个百分点，
+所以理论值只能给区间，不能给点值。
+
+完整报告（含 10 条要求逐条对照、14 条 trace、独立复算、NPN 扩展评估）见
+[docs/v0.9-diode.md](docs/v0.9-diode.md)。
+
+---
+
+## 四、环境依赖
+
+| 项 | 值 |
+| --- | --- |
+| Multisim | NI Circuit Design Suite **14.3**，装在 `C:\Program Files (x86)\National Instruments\Circuit Design Suite 14.3` |
+| Python | 3.11+（编解码/XML 部分任意版本；COM 部分**必须 32 位**） |
+| 第三方库 | **零**。编解码、XML、GUI 全是标准库 |
+| 编译 DCL 工具（可选） | `gcc -O2 -o vendor/dcltool.exe vendor/dcltool.c vendor/blast.c` |
+| 权限 | **不需要管理员**（前提：已关闭 `multisim.exe` 的"以管理员身份运行"兼容性设置，见下） |
+
+### 关于那三个"访问数据库时发生错误"弹窗
+
+本机打开 Multisim 会弹 3 个数据库错误框，是 **Win11 安全补丁导致的机器固有问题**，
+与我们的代码无关（用户手动打开也有）。代码会自动点掉它们（`msui.dismiss_all()`）。
+
+如果给 `multisim.exe` 设了"以管理员身份运行"，反而会弹出 UAC 对话框卡住自动化。
+**建议关掉这个兼容性设置**——提权对生成电路文件没有任何帮助（我们直接写文件，不走元件库），
+只会让每次启动都要人工批准。
+
+---
+
+## 五、30 秒上手（给接手的 agent）
+
+```bash
+cd multisim-ctrl
+
+# 1. 解压语料库（108 个官方样例的明文 XML，ground truth）
+mkdir -p /tmp/corpus && gunzip -k corpus/samples/PowerSupply.xml.gz -c > /tmp/corpus/PowerSupply.xml
+
+# 2. 读一个样例，看结构
+python - <<'PY'
+import sys; sys.path.insert(0, "tools")
+import msmodel, json
+c = msmodel.Circuit.from_xml_file("/tmp/corpus/PowerSupply.xml")
+print(json.dumps(c.summary(), ensure_ascii=False, indent=1))
+PY
+
+# 3. 生成验收电路并让 Multisim 打开
+python tools/build_acceptance.py
+python tools/verify_open.py out/ref/acceptance.ms14 out/verify.json
+
+# 4. 一句话生成电路并仿真（32 位 Python）
+runtime\py32\python.exe tools/nl_run.py --file examples/nl/rc_lowpass.txt
+```
+
+**先读 [docs/deadends.md](docs/deadends.md)，再读 [docs/next-steps.md](docs/next-steps.md)。**
+这两份文档能避免重复踩坑。
+
+---
+
+## 六、文件导航
+
+```
+multisim-ctrl/
+├── README.md                  ← 你在这里
+├── docs/
+│   ├── ms14-format.md         .ms14 格式规范（DCL 算法 + 容器 + 字节细节）
+│   ├── circuit-xml.md         电路 XML 对象模型（坐标系/引脚/参数四处存储）
+│   ├── probe.md               探针结构 + GUI 放置流程
+│   ├── architecture.md        代码架构
+│   ├── deadends.md            死路清单与避坑
+│   ├── dc-static.md           直流静态电路：EnumOutputs 只能调一次的根因
+│   ├── mcp.md                 MCP Tool API：工具表 / 错误码 / 自动布局
+│   ├── layout.md              ★ 分支感知布局（P2）：拓扑模板 / 拒绝规则 / 坐标网格
+│   ├── v0.9-diode.md          ★ v0.9 二极管闭环：注册表 / 闸门 / 真机数据 / NPN 评估
+│   ├── v0.9-component-library-assessment.md  14.3.3 元件库复测（donor 32→193）
+│   ├── agent-acceptance-v0.8.md  v0.8.0 Agent 验收（5 轮 trace + 三个 API 缺陷）
+│   ├── next-steps.md          路线图
+│   ├── api.md                 COM API 全表（旧路线留存）
+│   ├── case/                  ★ Agent Acceptance Test 案例（题目 + 电路图 + 波形图）
+│   └── shots/                 关键截图（8 张，按时间顺序）
+├── examples/
+│   ├── rc_lowpass.ir.json     ★ Circuit IR 示例（RC 低通的完整描述）
+│   └── nl/*.txt               ★ 自然语言样例（一句话电路描述）
+├── tools/
+│   ├── dcl.py                 ★ DCL 编解码 + .ms14 读写（核心，零依赖）
+│   ├── mssafe.py              ★★ XML 无损往返（属性值换行保护）——**所有读写必须走它**
+│   ├── msmodel.py             ★ 电路对象模型层
+│   ├── msbuild.py             ★ 装配器（克隆元件 + 连线 + 探针）
+│   ├── circuit_ir.py          ★ Circuit IR 数据模型 + 校验（纯 JSON，无 XML 概念）
+│   ├── ir_compile.py          ★ IR → .ms14（只调用已验证 API）
+│   ├── ir_run.py              ★ IR 端到端验收（编译→仿真→拟合→比对）
+│   ├── circuit_session.py     ★★ MCP 会话层：句柄 / 语义参数 / 结构化错误
+│   ├── layout.py              ★★ 拓扑分析 + 坐标（analyze 判拓扑、plan 算坐标）
+│   ├── registry.py            ★★ 元件注册表运行时读取层（v0.9；`ir_spec()` 是闸门）
+│   ├── build_registry.py      ★ 离线扫 .ms14 → registry/components.json（v0.9）
+│   ├── mcp_server.py          ★★ MCP Server（JSON-RPC over stdio，8 个工具）
+│   ├── mcp_client.py          ★ MCP 验收客户端（走真实协议，不调 Python 函数）
+│   ├── test_mcp_session.py    ★ 会话层测试：113 项，不需要 Multisim
+│   ├── test_layout.py         ★ 拓扑层测试：51 项，纯逻辑
+│   ├── test_diode.py          ★ 二极管闭环测试：62 项，不需要 Multisim（v0.9）
+│   ├── nl2ir.py               ★ 中文 → Circuit IR（规则解析器，不依赖 LLM）
+│   ├── nl_run.py              ★ 中文端到端验收（一句话 → 仿真 → 理论比对）
+│   ├── ir_sim.py              仿真 + 拟合内核（nl_run 用；ir_run 保持原样当基线）
+│   ├── test_nl2ir.py          ★ 解析测试：59 项正向/反向用例
+│   ├── ir_compare.py          结构比对两个 .ms14
+│   ├── fitlib.py              正弦最小二乘拟合 + 一阶低通理论值
+│   ├── build_rc_lowpass.py    ★ 用 add_part 生成 RC 低通（`--freq` 改频率）
+│   ├── validate_rc.py         ★ RC 瞬态验证（最小二乘拟合幅值/相位 vs 理论）
+│   ├── build_dc.py            ★ 最小直流电路 V1→R1→GND（只调已验证 API）
+│   ├── dc_run.py              ★ 直流取数验收（`--mode transient|dcop`）
+│   ├── dc_strategies.py       直流取数时序实验（S1~S4，`--only` 单独跑）
+│   ├── build_acceptance.py    ★ 验收电路生成脚本（`--divider` 出分压器版本）
+│   ├── validate_acceptance.py ★ 验收仿真（读回电压 + 判定）
+│   ├── test_mssafe.py         ★ 回归测试：XML 往返必须逐字节一致
+│   ├── p18_run2.py            稳健的瞬态读取（**必须在 stop() 之前读**）
+│   ├── index_samples.py       样例索引生成
+│   ├── verify_open.py         启动 Multisim + 点弹窗 + 截图
+│   ├── msui.py                GUI 高层封装（launch/click_img/shot）
+│   ├── guiauto.py             Win32 GUI 原语（click/hotkey/foreground/screenshot）
+│   ├── INDEX.md               ★ 160 个 p*_*.py 调查脚本的分阶段索引
+│   └── ...                    其余为探索期一次性脚本，保留备查
+├── vendor/
+│   ├── blast.c / blast.h      Mark Adler 公版 PKWARE DCL 解压器（ground truth）
+│   └── dcltool.c              C 版命令行编解码工具
+├── corpus/
+│   ├── samples/*.xml.gz       108 个官方样例解压后的明文 XML（gzip，共 7.4 MB）
+│   ├── samples14/*.ms14       ★ 10 个原生 Multisim 14.3 电路（含 555 / 运放 / buck）
+│   └── samples_index.json     每个样例的元件清单 (refdes, family, part)
+├── registry/
+│   └── components.json        ★★ 192 种元件的 ComponentSpec + `enabled` 闸门（v0.9，278 KB）
+├── out/agent_test/            ★ Agent Acceptance Test 的全部证据（脚本/轨迹/报告）
+├── out/agent_v09/diode/       ★ v0.9 二极管闭环证据（.ms14 / 10000 点 CSV / trace / acceptance）
+├── out/ref/
+│   ├── blank_circuit.xml      空白电路明文（148367 B，注入基底）
+│   ├── own_blank.ms14         用自研压缩器重打包的空白电路（Multisim 能打开）
+│   ├── acceptance.ms14        验收电路（V1 5V + R1 1kΩ + C1 + GND，探针在源网）
+│   ├── acceptance_divider.ms14 验收电路（分压器，探针在中点，应读 2.5V）
+│   ├── rc_lowpass.ms14        RC 低通（1kHz 激励，Vin/Vout 双探针）
+│   ├── rc_lowpass_100Hz.ms14  RC 低通频响验证点（100 Hz）
+│   ├── rc_lowpass_10kHz.ms14  RC 低通频响验证点（10 kHz）
+│   ├── with_probes.ms14       Multisim 保存的、带探针的版本
+│   └── probe_ext_full.xml     探针对象完整 XML（最重要的参考样本）
+├── msc.py / cli.py / demo.py   COM API 路线（阶段一产物）
+├── samples/                   原始 .ms12 示例电路
+└── run.bat                    自带 32 位 Python + pywin32 的启动器
+```
+
+---
+
+## 七、已验证 / 未验证（严格区分）
+
+### ✅ 已在本机实测通过
+
+- `.ms14` = PKWARE DCL (implode)，用 `blast.c` 交叉验证，解出长度与头部字段分毫不差
+- 纯 Python 编解码往返一致
+- **XML 无损往返**：`mssafe` 让 4 个原生样本往返后**逐字节一致**（`tools/test_mssafe.py`）
+- 自研压缩器产出的 `.ms14` 能被 Multisim 正常打开（`own_blank.ms14`）
+- 元件克隆（电气 + 绘图 + 引脚定义 + 模型）能正确渲染
+- 导线生成（`CIITLinkComp`）能正确渲染
+- 元件值四处同步修改后，界面显示正确更新（50Ω → 1kΩ）
+- 免提权启动 Multisim、自动点掉 3 个数据库弹窗
+- GUI 菜单导航放电压探针、保存后文件里确实出现探针对象
+- **从空白电路生成分压器，中点实测 2.5 V**（证明 R1/R2 真的进了 SPICE 网表并导通）
+- **从空白电路生成 V-R-C-GND 串联链，中点实测 5 V**（证明电容在直流下开路、电阻无压降）
+- 原生 555 电路、运放电路经本仓库读写后，8 个输出读数与原文件完全一致
+- **纯代码生成新式探针，且多探针可区分**：`LocalName` 序号唯一后
+  `EnumOutputs()` 返回 `['V(探针1)', 'V(探针2)']`，两条读数各自正确
+- **统一元件 API `add_part(family, part, ...)`**：不写死 XML ID，按家族/型号
+  从真实 `.ms14` 解析模板；已覆盖 DC 源、正弦源、R、C、GND、探针
+- **RC 低通三点频响全部对上理论**：100 Hz / 1 kHz / 10 kHz 的增益与相位
+  误差分别 ≤ 0.0012 与 ≤ 0.15°（`tools/validate_rc.py`）
+- **Circuit IR 端到端跑通**：IR → `.ms14` → 仿真 → 拟合，结果与直接调用
+  `add_part` **完全一致**（增益 Δ=0、相位 Δ=0.000°）
+- **IR 校验在落盘前拦截错误**：26 个反向用例（`tools/test_ir_validate.py`）
+- **中文 → Circuit IR**：59 项解析测试（`tools/test_nl2ir.py`），
+  验收句解析结果与 `examples/rc_lowpass.ir.json` 字段逐个相等
+- **中文端到端**：1 kHz / 2 kHz 两个电路真跑 Multisim，增益与相位均对上理论，
+  1 kHz 那组与直接 `add_part` 的基线**逐位相同**（Δ=0.00e+00 / Δ=0.000°）
+- **直流静态电路（`DC_POWER` + R + GND）**：`transient`（1200 点/探针）与
+  `DoDCOperatingPoint`（1 点/探针）两条路读数完全一致 ——
+  `V(in)=5.000000`、`V(0)=0.000000`、`V_R=5.000000`、`R=1000.0`（Multisim 报的）、
+  `I=V_R/R=0.005000 A`。中文验收句端到端跑通（`docs/dc-static.md`）
+- **COM 调用顺序**：`EnumOutputs` 在 `run()` 之后调会作废输出缓冲
+  （二分证据 P0~P4 见 `out/dc/bisect_*.json`）
+- **MCP Tool API**：8 个工具走真实 JSON-RPC 协议，RC 低通增益 **0.706316** /
+  相位 **−45.065°**（与 `nl_run` 的 0.70632 / −45.06° 一致），
+  直流 5 V / 1000 Ω / 5 mA；56 项断言全过（`out/mcp/acceptance.json`）
+- **MCP 会话层**：96 项纯逻辑测试（`tools/test_mcp_session.py`），
+  覆盖语义参数映射、自动网络命名、引脚冲突、探针上限、拓扑不支持的报错
+- **分支感知布局（P2）**：`tools/layout.py` + 51 项纯逻辑测试
+  （`tools/test_layout.py`）。6 类拓扑模板全部识别正确
+  （`shunt_load` / `series_chain` / `divider` / `bypass` / `tee` / `ladder`），
+  5 类不支持的拓扑全部明确拒绝并给出 `context.reason`
+- **二阶 RC 梯形真机验收**：同一个 `out/agent_test2/run_task2.py`（**一行没改**），
+  `simulate` 从被拒变成跑出数 —— 增益 **0.583062**（理论 0.584342，误差 −0.219%）、
+  相位 **−64.705°**（理论 −64.581°，误差 −0.123°），1200 点 / 26.8 s
+- **坐标不影响网表**：一阶 RC 与直流电路换到新网格后读数与旧网格**逐位一致**
+  （`mcp_client` 56 项断言全过）；同时实测到一条边界 ——
+  导线横穿别的符号框会让 Multisim 少认一个探针通道（`docs/layout.md` 第 6 节）
+- **元件注册表（v0.9.0）**：`tools/build_registry.py` 扫 128 个 `.ms14` 抽出
+  **192 种**元件的 ComponentSpec（引脚名 / 几何 / SPICE 模板 / donor），零手写；
+  `registry/components.json` 278 KB 入库，`tools/registry.py` 是运行时读取层
+- **二极管半波整流真机闭环（v0.9.0）**：Agent 只靠 `tools/list`，
+  14 次调用 0 失败 / 25.9 s 走完
+  `add_component(DIODE/1N4007G) → IR → 布局 → donor 克隆 → 仿真 → measure`。
+  输出峰值 **4.3696 V**、最小值 **−0.00010 V**、直流分量 **1.3051 V**；
+  独立复算深导通压降 **0.6200 ± 0.0036 V**（n=2042）、反偏漏电 **1.11 mV**；
+  两个探针都在（`outputs=['V(探针1)','V(探针2)']`）（`docs/v0.9-diode.md`）
+- **v0.9.0 零回归**：5 种老元件的 `LEGACY_SUPPORTED` 仍是字面量常量、registry 不覆盖；
+  一阶 RC 真机复测 gain **0.4332753354**（v0.8 基线 0.4332753）、相位 −64.324879°；
+  `test_diode` 62/62、`test_mcp_session` 113/113、`test_layout` 51/51
+
+### ⬜ 未验证（路线图见 [docs/next-steps.md](docs/next-steps.md)）
+
+- **除 `DIODE/1N4007G` 外的另外 191 种 donor**：只是"目录里有"，
+  `enabled` 没放开、没有布局模板、没有测试。**不要当成已支持**
+- **二极管的其它拓扑**：桥式整流（`diode_multiple`）、带滤波电容（`diode_with_capacitor`）、
+  续流 / 钳位 / 检波 —— 全部明确拒绝
+- **BJT_NPN**：ComponentSpec 层可直接复用（改一行 `enabled`），
+  但 `layout.analyze()` 的 `_two_pin_other()` 对三端元件返回 `None`，
+  整个主干遍历假设建立在两端元件上 —— **layout 层不可复用**，需要单独写
+  `_analyze_three_terminal()`（评估见 `docs/v0.9-diode.md` §5）
+- `RESISTOR_RATED` / `CAPACITOR_RATED`（family `RATED_VIRTUAL`）路线
+- 运放、555 等多引脚元件的通用 `add_part` 支持
+- 元件符号库的位置（能否不靠克隆、直接按 (family, part) 新建元件）
+- **真正的并联支路 / 并联到地 / 反馈 / 桥接**：P2 是明确拒绝（`fork` /
+  `parallel_shunt`），不是排不出来。网表本来就能表达，缺的是"两条并排支路
+  怎么摆才看得懂、且不穿符号"
+- **主干超过 4 级、多电源**：同上，明确拒绝
+
+### ❓ 已知未知
+
+- `.ms14` 里 `&UNI..._uc<hash>` 的单位哈希表（电阻 `103a9`、电压 `100b5V` 是实测值，
+  完整映射表未建）
+- 探针序号超过 9 时的命名方式（当前只支持一位数字）
+
+---
+
+## 八、致谢与许可
+
+- `vendor/blast.c` / `blast.h` 来自 zlib 仓库 `contrib/blast/`，作者 Mark Adler，
+  公有领域。格式说明注释是本项目破解 `.ms14` 的钥匙。
+- 官方样例电路来自 Multisim 安装目录
+  `C:\Users\Public\Documents\National Instruments\Circuit Design Suite 14.3\samples\`。
+
+本项目为私人研究用途，代码可自由使用。
+
+## 2026-10-26 根因定论（取代 2026-10-24 的「克隆电阻开路」判断）
+
+v0.1.0 里那句「克隆的 `RESISTOR_VIRTUAL` 在仿真中等效开路」是**症状描述，不是根因**。
+
+真实根因：`CIITDiagram@SimState` 属性里是一段**多行**序列化文本
+
+```
+SimState="&ASCSIMULATION_INFO:list{ANALYSES:list{
+ANALYSIS_LIST:list{}
+ANALYSIS:list{
+...
+}}}"
+```
+
+XML 1.0 规范 3.3.3 规定属性值里的字面换行必须归一化成空格，`ElementTree`
+严格遵守 → 这块数据被压平成一行 → Multisim 自己的解析器读不回来 → 仿真配置丢失。
+
+所以不是「电阻克隆坏了」，而是**任何经过 ET 往返的文件都会坏**——包括原生文件。
+分离实验（`out/p18_R_repack.ms14` vs `out/p18_S_etround.ms14`）：
+
+| 版本 | 处理 | I(PR1) | 可读输出 |
+| --- | --- | --- | --- |
+| 原生 | — | 13.9977 A | 8/8 |
+| R | 只重打包容器，XML 字节不动 | 13.9977 A | 8/8 |
+| S | 仅 ET 解析+序列化 | 0 A | 3/8 |
+
+修复后同一个分压器：中点 **2.5 V**（期望 2.5），极差 1.3e-15。
+
+**教训：凡是要动 `.ms14` 的代码，XML 读写必须走 `mssafe`，不能用裸 `ET.fromstring`
+/ `ET.tostring`。** 回归测试 `tools/test_mssafe.py` 守住这条。

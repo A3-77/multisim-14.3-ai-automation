@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="272" viewBox="0 0 880 272" role="img" aria-label="v0.4.0 一句话生成电路">
+<rect width="880" height="272" rx="10" fill="#ffffff" stroke="#e2e8f0"/>
+<text x="24.0" y="28.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="15" fill="#0f172a" font-weight="600" text-anchor="start" >v0.4.0 · 一句话直接变成可仿真的电路</text>
+<text x="24.0" y="47.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#64748b" font-weight="400" text-anchor="start" >解析器是规则引擎不是 LLM —— 同一句话永远解析成同一份 IR，否则下游不可复现、回归无从谈起</text>
+<rect x="24" y="68" width="330" height="96" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="40.0" y="90.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#64748b" font-weight="600" text-anchor="start" >输入（中文）</text>
+<text x="40.0" y="112.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12.5" fill="#0f172a" font-weight="400" text-anchor="start" >1V 1kHz 正弦源，经过 1kΩ 电阻后</text>
+<text x="40.0" y="130.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12.5" fill="#0f172a" font-weight="400" text-anchor="start" >接 159nF 电容到地，</text>
+<text x="40.0" y="148.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12.5" fill="#0f172a" font-weight="400" text-anchor="start" >在输入和输出各放一个探针</text>
+<line x1="356" y1="116" x2="410" y2="116" stroke="#cbd5e1" stroke-width="1.8"/>
+<path d="M404 111 L411 116 L404 121" fill="none" stroke="#cbd5e1" stroke-width="1.8"/>
+<rect x="418" y="68" width="438" height="96" rx="8" fill="#f8fafc" stroke="#e2e8f0"/>
+<text x="434.0" y="90.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11" fill="#64748b" font-weight="600" text-anchor="start" >解析结果（Circuit IR，纯 JSON，不含任何 Multisim 概念）</text>
+<text x="434.0" y="112.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start" >元件  V1(AC 1V/1kHz)  R1(1kΩ)  C1(159nF)  GND1</text>
+<text x="434.0" y="130.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start" >网络  in = V1.+ + R1.1      out = R1.2 + C1.1      0 = V1.- + GND1.1 + C1.2</text>
+<text x="434.0" y="148.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12" fill="#0f172a" font-weight="400" text-anchor="start" >探针  P1@in  P2@out      仿真  transient 0 ~ 6 ms，200 kSa/s</text>
+<rect x="24" y="182" width="832" height="46" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+<text x="40.0" y="202.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#15803d" font-weight="600" text-anchor="start" >实测（真跑 Multisim 14.3）</text>
+<text x="40.0" y="219.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="12" fill="#166534" font-weight="400" text-anchor="start" >增益 0.70632（理论 0.70745）· 相位 −45.06°（理论 −44.97°）· 与直接 add_part 的基线 Δ = 0.00e+00</text>
+<text x="24.0" y="252.0" font-family="'Segoe UI','PingFang SC','Microsoft YaHei','Hiragino Sans GB',sans-serif" font-size="11.5" fill="#64748b" font-weight="400" text-anchor="start" >缺频率、缺阻值、并联拓扑、白名单外元件 —— 一律报错并说清缺什么，不猜。猜错一个值，电路照样能跑，但结论是错的。</text>
+</svg>
