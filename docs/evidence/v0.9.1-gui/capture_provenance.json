@@ -1,0 +1,67 @@
+{
+  "method": "PrintWindow(PW_RENDERFULLCONTENT)+GetDIBits -> zlib PNG (tools/screenshot.py)",
+  "entry_point": "screenshot.capture_schematic / screenshot.capture_simulation",
+  "note": "全部是真实 Multisim 14.3.3 GUI 窗口截图，非 GetCircuitImage 导出、非重绘",
+  "items": [
+    {
+      "png": "00_rc_schematic_before_fix.png",
+      "size": [
+        1550,
+        830
+      ],
+      "sha256": "06c46365949e08fc25ed37d2ff8e725c8644697e1aa9211b83606e04bbc36b56",
+      "bytes": 41375,
+      "target": "schematic",
+      "ms14": "out/fix_skel/rc_lowpass_BEFORE.ms14",
+      "ms14_sha256": "787af055ae1e97d98731ea9ce55d4b79a7a448dcb7c968a6024d38d6b90994d2"
+    },
+    {
+      "png": "01_rc_schematic.png",
+      "size": [
+        1550,
+        830
+      ],
+      "sha256": "b5764a16f6ffedec40fba9c94fc81276c981bc77d69eecf146b49682fe42ddbd",
+      "bytes": 42963,
+      "target": "schematic",
+      "ms14": "out/ref/rc_lowpass.ms14",
+      "ms14_sha256": "250eb7862bb4904f99137071f82487879b369e39c5c5e419be3872d7f20c47a3"
+    },
+    {
+      "png": "02_rc_grapher.png",
+      "size": [
+        658,
+        470
+      ],
+      "sha256": "dfd518beade28b97cb074a2324dffefd4ef53062a3c3c0a539f1be9f6f101ef0",
+      "bytes": 14699,
+      "target": "simulation",
+      "ms14": "out/ref/rc_lowpass.ms14",
+      "ms14_sha256": "250eb7862bb4904f99137071f82487879b369e39c5c5e419be3872d7f20c47a3"
+    },
+    {
+      "png": "03_halfwave_schematic.png",
+      "size": [
+        1550,
+        830
+      ],
+      "sha256": "6e04a6b2085835c5948c8bc6c245b81e71003baf38f3dde6745e507ec389863e",
+      "bytes": 42069,
+      "target": "schematic",
+      "ms14": "out/acceptance/caseB/halfwave_50hz.ms14",
+      "ms14_sha256": "53665bc21bca6925e058a58a249200fc7f6fd4605a686c574e40a0ee3c625741"
+    },
+    {
+      "png": "04_halfwave_grapher.png",
+      "size": [
+        658,
+        470
+      ],
+      "sha256": "07b83a650fe71ace25c9b3b86f99a5c25004ec446601bcd149144e514bf3cf4b",
+      "bytes": 15449,
+      "target": "simulation",
+      "ms14": "out/acceptance/caseB/halfwave_50hz.ms14",
+      "ms14_sha256": "53665bc21bca6925e058a58a249200fc7f6fd4605a686c574e40a0ee3c625741"
+    }
+  ]
+}

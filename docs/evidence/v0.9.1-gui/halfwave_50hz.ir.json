@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "name": "halfwave_50hz",
+  "components": [
+    {
+      "refdes": "V1",
+      "family": "SIGNAL_VOLTAGE_SOURCES",
+      "part": "AC_VOLTAGE",
+      "value": 5.0,
+      "params": { "5": 50.0 },
+      "position": [300.0, 300.0]
+    },
+    {
+      "refdes": "D1",
+      "family": "DIODE",
+      "part": "1N4007G",
+      "position": [520.0, 300.0]
+    },
+    {
+      "refdes": "R1",
+      "family": "RESISTOR",
+      "part": "RESISTOR_VIRTUAL",
+      "value": 1000.0,
+      "position": [700.0, 300.0]
+    },
+    {
+      "refdes": "GND1",
+      "family": "POWER_SOURCES",
+      "part": "GROUND",
+      "position": [300.0, 440.0]
+    }
+  ],
+  "nets": [
+    { "name": "in",  "pins": ["V1.+", "D1.A"] },
+    { "name": "out", "pins": ["D1.K", "R1.1"] },
+    { "name": "0",   "pins": ["V1.-", "R1.2", "GND1.1"] }
+  ],
+  "probes": [
+    { "refdes": "P_in",  "kind": "V", "net": "in" },
+    { "refdes": "P_out", "kind": "V", "net": "out" }
+  ],
+  "simulation": {
+    "analysis": "transient",
+    "start": 0.0,
+    "stop": 0.1,
+    "step": null,
+    "sample_rate": 100000.0
+  }
+}

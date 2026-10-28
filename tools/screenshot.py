@@ -120,10 +120,33 @@ def children(hwnd):
     return out
 
 
-def child_by_id(hwnd, ctrl_id):
+def child_by_id(hwnd, ctrl_id, visible_only=False):
     for c in children(hwnd):
         if c["id"] == ctrl_id:
+            if visible_only and not u.IsWindowVisible(c["hwnd"]):
+                continue
             return c["hwnd"]
+    return 0
+
+
+def child_by_id_deep(hwnd, ctrl_id, visible_only=True, max_depth=6):
+    """递归找控件。
+
+    分析对话框里同一个 id 会出现**多个实例**：交互式仿真面板和瞬态参数面板
+    共用一套控件 ID，隐藏那份的值是 `1e+30`。往隐藏实例写参数会静默失败，
+    所以默认只认可见的那个。
+    """
+    if max_depth < 0:
+        return 0
+    for c in children(hwnd):
+        if c["id"] == ctrl_id:
+            if visible_only and not u.IsWindowVisible(c["hwnd"]):
+                continue
+            return c["hwnd"]
+    for c in children(hwnd):
+        h = child_by_id_deep(c["hwnd"], ctrl_id, visible_only, max_depth - 1)
+        if h:
+            return h
     return 0
 
 
@@ -430,11 +453,17 @@ def open_in_gui(ms14_path, timeout=60.0):
 
 # ---------------------------------------------------------------- 仿真截图
 def _menu_bar_xy(hwnd, which):
-    """菜单栏各项的屏幕坐标（相对窗口原点）。BCG 自绘，只能按位置点。"""
+    """菜单栏各项的屏幕坐标。BCG 自绘菜单，GetMenu() 返回 0、Alt+字母无效，
+    只能按位置点。
+
+    下面的偏移量是**实测标定值**（屏幕 125% DPI、窗口最大化时
+    rect=(-7,-7,1543,823)）：「仿真(S)」落在 rect 原点 +(249, 43)。
+    其余项按同一间距外推，尚未逐个验证 —— 目前只有 simulate 在用。
+    """
     l, t, _r, _b = rect(hwnd)
-    x = {"file": 30, "edit": 80, "view": 135, "place": 185,
-         "simulate": 235, "transfer": 290, "tools": 340}[which]
-    return l + x, t + 38
+    x = {"file": 44, "edit": 94, "view": 149, "place": 199,
+         "simulate": 249, "transfer": 304, "tools": 354}[which]
+    return l + x, t + 43
 
 
 def _analysis_list(hwnd):
@@ -462,8 +491,8 @@ def _lb_item_rect(lb, index):
 def open_analysis_dialog(hwnd, timeout=30.0):
     x, y = _menu_bar_xy(hwnd, "simulate")
     click(x, y, settle=0.9)
-    # 「Analyses and simulation(A)」在菜单第 4 个可选项
-    click(x + 92, y + 88, settle=2.0)
+    # 「Analyses and simulation(A)」：实测相对菜单项偏移 +(68, 102)
+    click(x + 68, y + 102, settle=2.0)
     t0 = time.time()
     while time.time() - t0 < timeout:
         for w in enum_windows():
@@ -476,6 +505,12 @@ def open_analysis_dialog(hwnd, timeout=30.0):
 
 
 def select_transient(dlg):
+    """选中「瞬态分析」。
+
+    不能用鼠标点列表行：LB_GETITEMRECT 给的是虚拟坐标，125% DPI 下会点偏
+    一行（实测点成了「直流扫描」，结果是 DC 传输特性而不是瞬态波形）。
+    改用 LB_SETCURSEL + WM_COMMAND(LBN_SELCHANGE) 通知父窗口，再回读校验。
+    """
     lb = _analysis_list(dlg)
     if not lb:
         raise CaptureError("NO_ANALYSIS_LIST", "对话框里找不到分析列表（id=10009）")
@@ -488,7 +523,13 @@ def select_transient(dlg):
     if idx is None:
         raise CaptureError("NO_TRANSIENT_ITEM",
                            "分析列表里没有瞬态分析：%s" % items)
-    click_center(_lb_item_rect(lb, idx), settle=1.2)
+    u.SendMessageW(lb, 0x0186, idx, 0)                       # LB_SETCURSEL
+    u.SendMessageW(dlg, 0x0111, (1 << 16) | 10009, lb)      # WM_COMMAND + LBN_SELCHANGE
+    time.sleep(1.2)
+    cur = u.SendMessageW(lb, 0x0188, 0, 0)                  # LB_GETCURSEL
+    if cur != idx:
+        raise CaptureError("SELECT_FAILED",
+                           "列表选中项是 %r，期望 %r" % (cur, idx))
     return idx, items
 
 
@@ -503,29 +544,56 @@ def _panel(dlg):
     return 0
 
 
+WM_SETTEXT, WM_GETTEXT, WM_GETTEXTLENGTH = 0x000C, 0x000D, 0x000E
+
+
+def get_text(hwnd):
+    """读控件文字。注意 WM_GETTEXTLENGTH=0x000E、WM_GETTEXT=0x000D，别搞反。"""
+    n = u.SendMessageW(hwnd, WM_GETTEXTLENGTH, 0, 0)
+    buf = ctypes.create_unicode_buffer(max(n, 1) + 2)
+    u.SendMessageW(hwnd, WM_GETTEXT, len(buf), buf)
+    return buf.value
+
+
 def set_param(panel, ctrl_id, value):
-    """把数值写进参数框：先点进去，再 Ctrl+A 覆盖输入。"""
-    h = child_by_id(panel, ctrl_id)
+    """把数值写进参数框，写完立刻回读校验。
+
+    先试 WM_SETTEXT（快、不受输入法/焦点影响）；没生效再退回
+    「点进去 + Ctrl+A + 逐字输入」。
+    """
+    h = child_by_id_deep(panel, ctrl_id) or child_by_id(panel, ctrl_id)
     if not h:
-        return False
+        return {"ok": False, "error": "找不到可见控件 id=%s" % ctrl_id}
+    before = get_text(h)
+    u.SendMessageW(h, WM_SETTEXT, 0, ctypes.c_wchar_p(value))
+    time.sleep(0.25)
+    after = get_text(h)
+    if after.strip() == value.strip():
+        return {"ok": True, "how": "WM_SETTEXT", "before": before, "after": after}
     click_center(rect(h), settle=0.3)
     hotkey(0x11, 0x41)          # Ctrl+A
     type_text(value)
-    time.sleep(0.2)
-    return True
+    time.sleep(0.3)
+    after2 = get_text(h)
+    return {"ok": after2.strip() == value.strip(), "how": "keyboard",
+            "before": before, "after": after2}
 
 
 def run_gui_transient(dlg, tstop="0.01", tmax="1e-5"):
-    panel = _panel(dlg)
-    if not panel:
-        raise CaptureError("NO_PARAM_PANEL", "找不到瞬态参数面板")
-    ok_stop = set_param(panel, 10034, tstop)
-    ok_max = set_param(panel, 10040, tmax)
-    run_btn = child_by_id(dlg, 10265)
+    # 参数控件不一定在 _panel() 认定的那个嵌套面板里，直接从整个对话框递归找
+    # 可见实例；找不到再退回 panel 范围。
+    stop = set_param(dlg, 10034, tstop)
+    tmax_r = set_param(dlg, 10040, tmax)
+    if not (stop.get("ok") and tmax_r.get("ok")):
+        raise CaptureError(
+            "PARAM_NOT_WRITTEN",
+            "瞬态参数没写进去：TSTOP=%s TMAX=%s" % (stop, tmax_r),
+            "多半是写到了隐藏控件实例；确认 pick 的是 IsWindowVisible 的那个")
+    run_btn = child_by_id_deep(dlg, 10265) or child_by_id(dlg, 10265)
     if not run_btn:
         raise CaptureError("NO_RUN_BUTTON", "对话框里找不到 Run 按钮（id=10265）")
     click_center(rect(run_btn), settle=1.5)
-    return {"tstop_set": ok_stop, "tmax_set": ok_max}
+    return {"tstop": stop, "tmax": tmax_r}
 
 
 def wait_window(title_contains, timeout=60.0):
@@ -573,7 +641,9 @@ def capture_simulation(ms14_path, out_path, tstop="0.01", tmax="1e-5", log=print
         raise CaptureError("NO_GRAPHER", "Run 之后没有出现图示仪（Grapher）窗口",
                            "确认电路有探针、分析项选的是瞬态分析")
     time.sleep(1.5)
-    u.ShowWindow(gw, 3)
+    # 不要最大化：图示仪的绘图区会把客户区填满，最大化后横轴刻度标签会被
+    # 下沿整个切掉（实测 1550x830 时完全看不到 0m/20m/40m）。自然尺寸
+    # （约 658x470）反而能完整露出时间轴。
     foreground(gw)
     time.sleep(1.0)
     p, ww, hh = capture_window(gw, out_path)
