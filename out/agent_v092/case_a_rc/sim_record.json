@@ -1,0 +1,86 @@
+{
+  "sim_id": "s-6962a5f3e8",
+  "circuit_id": "c-c357ba20bb",
+  "analysis": "transient",
+  "status": "ok",
+  "created": "2026-10-28T10:40:16",
+  "outputs": [
+    "V(探针1)",
+    "V(探针2)"
+  ],
+  "probes": [
+    {
+      "probe_id": "P_in",
+      "label": "探针1",
+      "output": "V(探针1)",
+      "net": "in",
+      "kind": "V"
+    },
+    {
+      "probe_id": "P_out",
+      "label": "探针2",
+      "output": "V(探针2)",
+      "net": "out",
+      "kind": "V"
+    }
+  ],
+  "rlc_reported_by_multisim": {
+    "C1": 3.183e-07,
+    "R1": 1000.0
+  },
+  "state": "0",
+  "sample_rate": 200000.0,
+  "stop": 0.005,
+  "start": 0.0,
+  "n": 1000,
+  "ms14": "out\\mcp\\sessions\\c-c357ba20bb\\case_a_lowpass.ms14",
+  "ir_snapshot": "out\\mcp\\sessions\\c-c357ba20bb\\sims\\s-6962a5f3e8.ir.json",
+  "waveform": "out\\mcp\\sessions\\c-c357ba20bb\\sims\\s-6962a5f3e8.csv",
+  "summary": {
+    "P_in": {
+      "n": 1000,
+      "min": -0.9976307397786864,
+      "max": 0.9976307397786861,
+      "mean": 2.26704549136738e-06
+    },
+    "P_out": {
+      "n": 1000,
+      "min": -0.4457157556905075,
+      "max": 0.5529915683910562,
+      "mean": 0.025615775557929012
+    }
+  },
+  "topology": {
+    "kind": "bypass",
+    "source": "V1",
+    "ground": "GND1",
+    "in_net": "in",
+    "gnd_net": "0",
+    "out_net": "out",
+    "n_series": 1,
+    "n_shunt": 1,
+    "stages": [
+      {
+        "index": 0,
+        "net": "in",
+        "series": "R1",
+        "shunt": null
+      },
+      {
+        "index": 1,
+        "net": "out",
+        "series": null,
+        "shunt": "C1"
+      }
+    ]
+  },
+  "timing": {
+    "layout_s": 0.002,
+    "compile_s": 14.859,
+    "run_s": 6.337,
+    "total_s": 21.198
+  },
+  "compile": {
+    "bytes": 31741
+  }
+}

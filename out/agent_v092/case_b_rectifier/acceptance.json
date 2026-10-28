@@ -1,0 +1,127 @@
+{
+  "case": "case_b_rectifier",
+  "requirement": "有一个 5V 峰值、50Hz 的交流输入，希望得到只保留正半周期的脉动直流，负半周期尽可能被抑制，负载为 1kΩ。请自行设计并验证。",
+  "agent_claim": {
+    "tool": "measure",
+    "seq": 13,
+    "mode": "rectifier",
+    "pairing": null,
+    "gain": null,
+    "phase_deg": null,
+    "channels": {
+      "P_in": {
+        "amp": null,
+        "min": -4.9934794,
+        "max": 4.99362123,
+        "mean": -7.494190976635322e-05
+      },
+      "P_out": {
+        "amp": null,
+        "min": -0.000104184992,
+        "max": 4.36958885,
+        "mean": 1.3051213953942942
+      }
+    },
+    "theory": {
+      "kind": "halfwave_rectifier",
+      "v_in_peak": 4.99362123,
+      "vf_at_peak": 0.6240323799999992,
+      "v_dc_constant_vf": 1.277502815366261,
+      "v_dc_ideal_diode": 1.5895190053662607,
+      "conduction_frac_constant_vf": 0.45730892787448574,
+      "conduction_frac_ideal_diode": 0.5,
+      "conduction_threshold": 0.0436958885,
+      "freq": 50.0,
+      "note": "恒定压降模型只在深导通区成立；开启点远低于饱和压降，所以实测直流分量与导通占比都落在 [恒定压降, 理想二极管] 区间内、且偏向理想端。用 vf_deep_on 核对压降是不是常数。"
+    }
+  },
+  "independent_result": {
+    "independent": true,
+    "method": "从 waveform.csv 原始采样点重算（过零点测频 + 最小二乘正弦拟合）",
+    "mode": "rectifier",
+    "measured": {
+      "csv": "out/agent_v092/case_b_rectifier/waveform.csv",
+      "columns": [
+        "t",
+        "V(探针1)",
+        "V(探针2)"
+      ],
+      "n_samples": 10000,
+      "t_range": [
+        0.0,
+        0.09999
+      ],
+      "input_freq_hz": 50.0,
+      "input_zero_crossings": 4,
+      "input_peak_v": 9.987101,
+      "input_min_v": -4.993479,
+      "input_max_v": 4.993621,
+      "output_min_v": -0.000104,
+      "output_max_v": 4.369589,
+      "output_mean_v": 1.305121,
+      "neg_ratio": 2.1e-05,
+      "pos_ratio": 0.875047,
+      "frac_samples_below_-10pct_peak": 0.0
+    },
+    "criteria": [
+      {
+        "name": "input_freq_hz",
+        "value": 50.000041,
+        "target": 50,
+        "tol_pct": 2,
+        "err_pct": 0.0,
+        "pass": true
+      },
+      {
+        "name": "input_peak",
+        "value": 4.99355,
+        "target": 5.0,
+        "tol_pct": 10,
+        "err_pct": -0.129,
+        "pass": true
+      },
+      {
+        "name": "neg_ratio",
+        "value": 2.1e-05,
+        "max_allowed": 0.05,
+        "pass": true
+      },
+      {
+        "name": "pos_ratio",
+        "value": 0.875047,
+        "min_required": 0.6,
+        "pass": true
+      }
+    ],
+    "pass": true
+  },
+  "agreement": null,
+  "iterations": [],
+  "files": {
+    "requirement.txt": {
+      "bytes": 174,
+      "sha256": "dbabca9d9c1a9a9c2ee613ad394cad9aec72b4cc2f9ddbcffff73fb4f1bf1566"
+    },
+    "circuit.ms14": {
+      "bytes": 32783,
+      "sha256": "18896574b7030a970ad0b498ee88eabd6b36e951b581a7bc565e14ee8a5b3fba"
+    },
+    "waveform.csv": {
+      "bytes": 338335,
+      "sha256": "e3932b63022a8dc29bb59fe445c0e0d954839b65451c4e592d14492d9043bfd4"
+    },
+    "01_schematic.png": {
+      "bytes": 38454,
+      "sha256": "0ffee57e1d9218b9795009ccb0f763ff071328ef41c74afae90efd68189a1d6b"
+    },
+    "02_simulation.png": {
+      "bytes": 14873,
+      "sha256": "d57c83087df7365e2143f987957ad04f12bc0eb9f4d0e119f17c8cabcb38cf4a"
+    },
+    "acceptance_spec.json": {
+      "bytes": 238,
+      "sha256": "34365603c357d83472a027934522ba78360fc9db3aa42531d54b76b83d76a03c"
+    }
+  },
+  "verdict": "PASS"
+}

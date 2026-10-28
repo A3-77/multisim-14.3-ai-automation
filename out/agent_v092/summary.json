@@ -1,0 +1,438 @@
+{
+  "version": "v0.9.2",
+  "baseline_commit": "25f0cc6",
+  "baseline_tag": "v0.9.1",
+  "goal": "验证真 LLM Agent 能否仅凭自然语言工程需求，自主判断电路类型、选拓扑、选元件、算参数、调 MCP 建电路、跑真实 Multisim 仿真、读结果判定，并在不满足时自行修正重跑",
+  "tool_surface": [
+    "create_circuit",
+    "add_component",
+    "connect",
+    "add_probe",
+    "get_circuit",
+    "simulate",
+    "measure",
+    "get_waveform"
+  ],
+  "component_library": [
+    "AC_VOLTAGE",
+    "RESISTOR",
+    "CAPACITOR",
+    "DIODE/1N4007G",
+    "GROUND"
+  ],
+  "table_columns": [
+    "case",
+    "requirement",
+    "design",
+    "agent_claim",
+    "independent_result",
+    "agreement",
+    "simulation_count",
+    "verdict"
+  ],
+  "rows": [
+    {
+      "case": "A",
+      "dir": "case_a_rc",
+      "requirement": "低通滤波：fc≈500Hz，1kHz 增益≈0.5",
+      "design": [
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": 1000
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        }
+      ],
+      "agent_claim": {
+        "gain": 0.4460739897135422,
+        "phase_deg": -63.49892981230549,
+        "mode": "ratio"
+      },
+      "independent_result": {
+        "gain": 0.446106,
+        "phase_deg": -63.5395,
+        "input_freq_hz": 999.9954,
+        "input_peak_v": 1.995261,
+        "cutoff_hz_derived": 498.451,
+        "neg_ratio": null,
+        "pos_ratio": null
+      },
+      "agreement": {
+        "agent_gain": 0.446074,
+        "independent_gain": 0.446106,
+        "abs_diff": 3.2e-05,
+        "rel_diff_pct": 0.0072
+      },
+      "simulation_count": 1,
+      "iteration_count": 0,
+      "tool_calls": 14,
+      "failed_tool_calls": 0,
+      "wall_time_s": 69.0,
+      "level": "Level 3",
+      "verdict": "PASS"
+    },
+    {
+      "case": "B",
+      "dir": "case_b_rectifier",
+      "requirement": "5V/50Hz -> 只保留正半周的脉动直流",
+      "design": [
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": 50
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        }
+      ],
+      "agent_claim": {
+        "gain": null,
+        "phase_deg": null,
+        "mode": "rectifier"
+      },
+      "independent_result": {
+        "gain": null,
+        "phase_deg": null,
+        "input_freq_hz": 50.0,
+        "input_peak_v": 9.987101,
+        "cutoff_hz_derived": null,
+        "neg_ratio": 2.1e-05,
+        "pos_ratio": 0.875047
+      },
+      "agreement": null,
+      "simulation_count": 1,
+      "iteration_count": 0,
+      "tool_calls": 14,
+      "failed_tool_calls": 0,
+      "wall_time_s": 54.0,
+      "level": "Level 3",
+      "verdict": "PASS"
+    },
+    {
+      "case": "C",
+      "dir": "case_c_iterative",
+      "requirement": "无源滤波：1kHz 增益 0.70±5%（含迭代）",
+      "design": [
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": 1000
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": 1000
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        },
+        {
+          "refdes": null,
+          "type": null,
+          "parameters": null,
+          "frequency": null
+        }
+      ],
+      "agent_claim": {
+        "gain": 0.6990864273023202,
+        "phase_deg": -53.36426680458076,
+        "mode": "ratio"
+      },
+      "independent_result": {
+        "gain": 0.699083,
+        "phase_deg": -53.3644,
+        "input_freq_hz": 1000.0041,
+        "input_peak_v": 1.99571,
+        "cutoff_hz_derived": null,
+        "neg_ratio": null,
+        "pos_ratio": null
+      },
+      "agreement": {
+        "agent_gain": 0.699086,
+        "independent_gain": 0.699083,
+        "abs_diff": 3e-06,
+        "rel_diff_pct": 0.0005
+      },
+      "simulation_count": 2,
+      "iteration_count": 2,
+      "tool_calls": 33,
+      "failed_tool_calls": 0,
+      "wall_time_s": 128.0,
+      "level": "Level 4",
+      "verdict": "PASS"
+    }
+  ],
+  "stats": {
+    "case_a_rc": {
+      "total_tool_calls": 14,
+      "successful_tool_calls": 14,
+      "failed_tool_calls": 0,
+      "simulation_count": 1,
+      "circuit_count": 1,
+      "wall_time_s": 69.0,
+      "tool_breakdown": {
+        "create_circuit": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "add_component": {
+          "n": 4,
+          "ok": 4,
+          "fail": 0
+        },
+        "connect": {
+          "n": 3,
+          "ok": 3,
+          "fail": 0
+        },
+        "add_probe": {
+          "n": 2,
+          "ok": 2,
+          "fail": 0
+        },
+        "get_circuit": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "simulate": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "measure": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "get_waveform": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        }
+      },
+      "error_codes": [],
+      "first_call": "2026-10-28T10:39:27",
+      "last_call": "2026-10-28T10:40:36"
+    },
+    "case_b_rectifier": {
+      "total_tool_calls": 14,
+      "successful_tool_calls": 14,
+      "failed_tool_calls": 0,
+      "simulation_count": 1,
+      "circuit_count": 1,
+      "wall_time_s": 54.0,
+      "tool_breakdown": {
+        "create_circuit": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "add_component": {
+          "n": 4,
+          "ok": 4,
+          "fail": 0
+        },
+        "connect": {
+          "n": 3,
+          "ok": 3,
+          "fail": 0
+        },
+        "add_probe": {
+          "n": 2,
+          "ok": 2,
+          "fail": 0
+        },
+        "get_circuit": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "simulate": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "measure": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        },
+        "get_waveform": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        }
+      },
+      "error_codes": [],
+      "first_call": "2026-10-28T10:40:48",
+      "last_call": "2026-10-28T10:41:42"
+    },
+    "case_c_iterative": {
+      "total_tool_calls": 33,
+      "successful_tool_calls": 33,
+      "failed_tool_calls": 0,
+      "simulation_count": 2,
+      "circuit_count": 2,
+      "wall_time_s": 128.0,
+      "tool_breakdown": {
+        "create_circuit": {
+          "n": 2,
+          "ok": 2,
+          "fail": 0
+        },
+        "add_component": {
+          "n": 12,
+          "ok": 12,
+          "fail": 0
+        },
+        "connect": {
+          "n": 8,
+          "ok": 8,
+          "fail": 0
+        },
+        "add_probe": {
+          "n": 4,
+          "ok": 4,
+          "fail": 0
+        },
+        "get_circuit": {
+          "n": 2,
+          "ok": 2,
+          "fail": 0
+        },
+        "simulate": {
+          "n": 2,
+          "ok": 2,
+          "fail": 0
+        },
+        "measure": {
+          "n": 2,
+          "ok": 2,
+          "fail": 0
+        },
+        "get_waveform": {
+          "n": 1,
+          "ok": 1,
+          "fail": 0
+        }
+      },
+      "error_codes": [],
+      "first_call": "2026-10-28T10:42:17",
+      "last_call": "2026-10-28T10:44:25"
+    }
+  },
+  "totals": {
+    "cases": 3,
+    "passed": 3,
+    "failed": 0,
+    "total_tool_calls": 61,
+    "total_failed_tool_calls": 0,
+    "simulation_count": 4,
+    "iteration_count": 2,
+    "wall_time_s": 251.0,
+    "max_level": "Level 4"
+  },
+  "levels": {
+    "1": "能把电路建起来（工具调通）",
+    "2": "能跑通真实仿真并读回波形",
+    "3": "自主选拓扑/算参数，一次设计即满足指标",
+    "4": "设计失败后能自行归因、改参数、重跑并收敛"
+  },
+  "evidence": {
+    "schematic": "每个 Case 的 01_schematic.png（真实 Multisim 窗口截图）",
+    "simulation": "每个 Case 的 02_simulation.png（图示仪窗口截图）",
+    "capture_method": "PrintWindow(PW_RENDERFULLCONTENT) + GetDIBits -> zlib PNG",
+    "capture_entry": "tools/screenshot.py: capture_schematic / capture_simulation",
+    "provenance": "capture_provenance.json（PNG 与 .ms14 / waveform.csv 的 SHA-256 关联）"
+  },
+  "methodology_caveat": "三个 Case 的拓扑选择、元件选择、参数计算、失败归因与修正，全部由 LLM 在对话中做出，逐条经 tools/agent_acceptance/agent_cli.py 以 stdio JSON-RPC 调用 MCP 完成；trace.jsonl 记录的是真实工具调用序列，harness 里没有任何Case 分支、没有写死拓扑或 R/C 数值。但执行层面是逐条发命令、而不是单个进程内的自主循环——这一点必须如实标注。"
+}

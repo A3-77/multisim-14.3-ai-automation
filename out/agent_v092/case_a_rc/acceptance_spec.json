@@ -1,0 +1,24 @@
+{
+  "mode": "sine_gain",
+  "in_col": 1,
+  "out_col": 2,
+  "checks": {
+    "input_peak": {
+      "target": 1.0,
+      "tol_pct": 10
+    },
+    "input_freq_hz": {
+      "target": 1000,
+      "tol_pct": 2
+    },
+    "cutoff_hz": {
+      "target": 500,
+      "tol_pct": 10
+    },
+    "gain": {
+      "target": 0.5,
+      "tol_pct": 20
+    }
+  },
+  "skip_frac": 0.3
+}

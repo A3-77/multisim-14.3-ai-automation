@@ -50,9 +50,12 @@ k32 = ctypes.windll.kernel32
 MS_EXE = r"C:\Program Files (x86)\National Instruments\Circuit Design Suite 14.3\multisim.exe"
 MAIN_CLASS = "Multisim14.3"
 
-# 窗口客户区里"画布"的估算内缩（左侧设计工具箱 ~160 px、顶部工具栏 ~95 px）
-CANVAS_MARGIN_L = 165
-CANVAS_MARGIN_T = 100
+# 窗口客户区里"画布"的内缩（125% DPI 实测标定，窗口 1550x830）
+#   工具栏下边框实测在 y=134，设计工具箱右边框实测在 x=195，
+#   两者都是横贯/纵贯的深色细线，必须排除在画布之外，否则自适应缩放失效。
+#   底部留 40 px 避开状态栏「层组/可见度/项目视图」。
+CANVAS_MARGIN_L = 215
+CANVAS_MARGIN_T = 145
 CANVAS_MARGIN_R = 20
 CANVAS_MARGIN_B = 40
 
@@ -191,6 +194,8 @@ KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
 MOUSEEVENTF_WHEEL = 0x0800
 
 
@@ -346,64 +351,233 @@ def canvas_region(hwnd):
             r - CANVAS_MARGIN_R, b - CANVAS_MARGIN_B)
 
 
-def content_fits(path, hwnd, margin=0.03):
-    """判断画布里的内容是否完整落在可视区域内（留 margin 边距）。
-
-    只统计**深色**像素：网格点/图纸边框是浅灰，会把包围盒撑满整张画布，
-    那样任何缩放都判成"装不下"，自适应就失去意义。
-    """
-    w, h, ch, _ = pngio.decode(path)
+def sheet_rect(path, hwnd, thr=245, step=2):
+    """图纸（纯白底）在画布里的矩形；找不到或贴到画布边带时返回 None。"""
+    w, h, ch, data = pngio.decode(path)
+    rgb = pngio.to_rgb(w, h, ch, data)
     reg = canvas_region(hwnd)
-    l, t, r, b = rect(hwnd)
+    l, t, _r, _b = rect(hwnd)
     x0, y0 = max(0, reg[0] - l), max(0, reg[1] - t)
     x1, y1 = min(w, reg[2] - l), min(h, reg[3] - t)
-    bb = pngio.dark_bbox(path, region=(x0, y0, x1, y1))
+    bx0, by0, bx1, by1 = x1, y1, -1, -1
+    for y in range(y0, y1, step):
+        base = y * w * 3
+        for x in range(x0, x1, step):
+            i = base + x * 3
+            if rgb[i] >= thr and rgb[i + 1] >= thr and rgb[i + 2] >= thr:
+                if x < bx0:
+                    bx0 = x
+                if x > bx1:
+                    bx1 = x
+                if y < by0:
+                    by0 = y
+                if y > by1:
+                    by1 = y
+    if bx1 < 0:
+        return None
+    # 白底贴满画布 => 图纸被放大到出界，屏蔽带无从谈起
+    if (bx0 <= x0 + 2 or by0 <= y0 + 2 or bx1 >= x1 - 2 or by1 >= y1 - 2):
+        return None
+    return (bx0, by0, bx1, by1)
+
+
+def circuit_bbox(path, hwnd, thresh=100, edge_band=14):
+    """电路内容（元件/位号/参数/导线/GND/探针）的深色包围盒。
+
+    两件事必须排除，否则包围盒会被撑到整张图纸，截出来的电路小到看不清参数：
+
+    1. **A4 图纸边框 + 刻度标注**。实测边框是双线夹刻度：外线 5 px 实心、
+       中间 7 px 画 A/B/C/D 和 1..8、内线 1 px，总宽约 13 px，白底图纸矩形
+       从刻度带外沿开始，所以四边各屏蔽 ±14 px。
+    2. **网格点**。灰度实测 160~180；导线/文字/符号是 0~20。
+       阈值取 100 就能干净分开（默认 150 会把网格点全算进来）。
+
+    落在图纸外面的内容照样计入 —— 那种情况更需要暴露出来。
+    """
+    s = sheet_rect(path, hwnd)
+    w, h, ch, data = pngio.decode(path)
+    rgb = pngio.to_rgb(w, h, ch, data)
+    reg = canvas_region(hwnd)
+    l, t, _r, _b = rect(hwnd)
+    x0, y0 = max(0, reg[0] - l), max(0, reg[1] - t)
+    x1, y1 = min(w, reg[2] - l), min(h, reg[3] - t)
+
+    def masked(x, y):
+        if s is None:
+            return False
+        sl, st, sr, sb = s
+        return (st - edge_band <= y <= st + edge_band or
+                sb - edge_band <= y <= sb + edge_band or
+                sl - edge_band <= x <= sl + edge_band or
+                sr - edge_band <= x <= sr + edge_band)
+
+    bx0, by0, bx1, by1 = x1, y1, -1, -1
+    for y in range(y0, y1, 2):
+        base = y * w * 3
+        for x in range(x0, x1, 2):
+            i = base + x * 3
+            if (rgb[i] * 299 + rgb[i + 1] * 587 + rgb[i + 2] * 114) // 1000 >= thresh:
+                continue
+            if masked(x, y):
+                continue
+            if x < bx0:
+                bx0 = x
+            if x > bx1:
+                bx1 = x
+            if y < by0:
+                by0 = y
+            if y > by1:
+                by1 = y
+    if bx1 < 0:
+        return None, s, (x0, y0, x1, y1)
+    return (bx0, by0, bx1, by1), s, (x0, y0, x1, y1)
+
+
+def content_fits(path, hwnd, pad_px=12, whole_sheet=False):
+    """内容是否完整落在画布内（四边各留 pad_px 像素）。
+
+    `whole_sheet=False`（默认）只看电路笔画，适合"电路占满画面"；
+    `whole_sheet=True` 用整张图纸的深色包围盒，适合"整页排版完整可见"。
+    两者都要求包围盒离画布四边至少 pad_px —— 贴边就说明被窗口裁掉了。
+    """
+    if whole_sheet:
+        w, h, _ch, _d = pngio.decode(path)
+        reg = canvas_region(hwnd)
+        l, t, _r, _b = rect(hwnd)
+        x0, y0 = max(0, reg[0] - l), max(0, reg[1] - t)
+        x1, y1 = min(w, reg[2] - l), min(h, reg[3] - t)
+        bb = pngio.dark_bbox(path, region=(x0, y0, x1, y1))
+        sheet = None
+    else:
+        bb, sheet, (x0, y0, x1, y1) = circuit_bbox(path, hwnd)
     if bb is None:
         return False, None
-    mw = int((x1 - x0) * margin)
-    mh = int((y1 - y0) * margin)
-    ok = (bb[0] > x0 + mw and bb[1] > y0 + mh and
-          bb[2] < x1 - mw and bb[3] < y1 - mh)
+    margins = (bb[0] - x0, bb[1] - y0, x1 - bb[2], y1 - bb[3])
+    ok = min(margins) >= pad_px
     fill = ((bb[2] - bb[0]) * (bb[3] - bb[1])) / float((x1 - x0) * (y1 - y0))
-    return ok, {"bbox": bb, "fill": round(fill, 3), "canvas": (x0, y0, x1, y1)}
+    return ok, {"bbox": bb, "fill": round(fill, 3), "canvas": (x0, y0, x1, y1),
+                "margins": margins, "pad_px": pad_px, "whole_sheet": whole_sheet,
+                "sheet": sheet, "masked": sheet is not None}
 
 
-def zoom_to_fit(hwnd, tmp_path, max_steps=8):
-    """先缩到最小，再逐级放大，停在"刚好装得下且最大"的那一级。
-
-    只动 Ctrl+滚轮（Multisim 的缩放手势），不碰任何电路数据。
-    """
-    l, t, r, b = rect(hwnd)
-    cx, cy = (l + r) // 2, (t + b) // 2
-    u.SetCursorPos(cx, cy)
-    time.sleep(0.2)
-    hotkey(0x11)                      # 松开的 ctrl，防止卡住
+def _zoom(hwnd, notches):
+    """Ctrl+滚轮缩放。notches > 0 放大，< 0 缩小（实测：滚轮向上=放大）。"""
+    if not notches:
+        return
     key_down(0x11)
-    wheel(-120, max_steps)
+    wheel(120 if notches > 0 else -120, abs(notches))
     key_up(0x11)
-    time.sleep(0.8)
+    time.sleep(0.55)
 
-    best = None
-    for step in range(max_steps + 1):
+
+def _drag_middle(x0, y0, x1, y1, steps=12):
+    """中键拖拽 = Multisim 的平移手势（实测有效，不选中/不移动任何元件）。"""
+    u.SetCursorPos(int(x0), int(y0))
+    time.sleep(0.15)
+    u.mouse_event(MOUSEEVENTF_MIDDLEDOWN, 0, 0, 0, 0)
+    time.sleep(0.1)
+    for i in range(1, steps + 1):
+        u.SetCursorPos(int(x0 + (x1 - x0) * i / steps),
+                       int(y0 + (y1 - y0) * i / steps))
+        time.sleep(0.03)
+    time.sleep(0.1)
+    u.mouse_event(MOUSEEVENTF_MIDDLEUP, 0, 0, 0, 0)
+    time.sleep(0.45)
+
+
+def center_view(hwnd, tmp_path, rounds=3, tol=6, drag_scale=1.25):
+    """把画面内容拖到画布正中，四边留出余量。
+
+    为什么要居中：Ctrl+滚轮以**光标位置**为锚点缩放。内容偏在画布一角时，
+    一放大就立刻被下沿/右沿裁掉，自适应缩放会卡在很远的缩略级别。
+
+    实测 125% DPI 下物理拖拽 d 像素、画面内容移动 1.25*d（虚拟化），
+    所以按 drag_scale 折算，残余偏差再闭环两三轮。
+    """
+    info = None
+    for _ in range(rounds):
         capture_window(hwnd, tmp_path)
-        ok, info = content_fits(tmp_path, hwnd)
-        if ok:
-            best = step
-        elif best is not None:
-            # 上一步刚好装得下，退回去
-            key_down(0x11)
-            wheel(120, 1)
-            key_up(0x11)
-            time.sleep(0.6)
-            capture_window(hwnd, tmp_path)
-            return {"zoom_steps": best, "info": info}
-        if step < max_steps:
-            key_down(0x11)
-            wheel(120, 1)
-            key_up(0x11)
-            time.sleep(0.6)
-    return {"zoom_steps": best if best is not None else max_steps,
-            "info": None}
+        ok, info = content_fits(tmp_path, hwnd, pad_px=0)
+        if not info:
+            return None
+        x0, y0, x1, y1 = info["canvas"]
+        bl, bt, br, bb = info["bbox"]
+        dx = (x0 + x1) // 2 - (bl + br) // 2
+        dy = (y0 + y1) // 2 - (bt + bb) // 2
+        if abs(dx) <= tol and abs(dy) <= tol:
+            return info
+        l, t, r, b = rect(hwnd)
+        cx, cy = (l + r) // 2, (t + b) // 2
+        _drag_middle(cx, cy, cx + dx / drag_scale, cy + dy / drag_scale)
+    capture_window(hwnd, tmp_path)
+    return content_fits(tmp_path, hwnd, pad_px=0)[1]
+
+
+def zoom_to_fit(hwnd, tmp_path, max_rounds=14, pad_px=12, whole_sheet=True):
+    """闭环把视图调到"电路内容完整可见、居中、且尽量大"。
+
+    为什么不能写死级数
+    ------------------
+    ① 每个 `.ms14` 里保存的视图缩放各不相同；
+    ② 实测同一个文件连开两次，走同样多格 Ctrl+滚轮，得到的缩放并不一样 ——
+       Multisim 会丢掉一部分滚轮消息。
+    所以只能"抓一帧 -> 判断 -> 微调一格"地收敛。
+
+    Ctrl+滚轮以**光标位置**为锚点缩放，所以每一格之前都把光标移到电路包围盒
+    中心：这样放大是围绕电路自己生长的，不会往画布一角漂。
+
+    只动 Ctrl+滚轮和鼠标中键拖拽（Multisim 自己的缩放/平移手势），
+    不碰任何电路数据。
+    """
+    def measure():
+        capture_window(hwnd, tmp_path)
+        return content_fits(tmp_path, hwnd, pad_px=pad_px,
+                             whole_sheet=whole_sheet)
+
+    def anchor(info):
+        """把光标放到电路包围盒中心（图像坐标 -> 屏幕坐标）。"""
+        l, t, _r, _b = rect(hwnd)
+        bl, bt, br, bb = info["bbox"]
+        u.SetCursorPos(l + (bl + br) // 2, t + (bt + bb) // 2)
+        time.sleep(0.12)
+
+    def zoom(notches):
+        key_down(0x11)
+        wheel(120 if notches > 0 else -120, abs(notches))
+        key_up(0x11)
+        time.sleep(0.5)
+
+    hotkey(0x11)                        # 松开可能卡住的 ctrl
+    trace = []
+    zoom(-max_rounds)                   # 先缩到底，保证起点装得下
+    ok, info = measure()
+    if not info:
+        return {"ok": False, "info": None, "trace": [("no-content",)]}
+    anchor(info)
+
+    for i in range(max_rounds * 2):
+        ok, info = measure()
+        if not ok:
+            if not info:
+                break
+            anchor(info)
+            zoom(-1)                # 装不下 -> 缩小一格
+            trace.append((i, "shrink", info["fill"]))
+            continue
+        anchor(info)
+        zoom(+1)                    # 装得下 -> 试放大一格
+        ok2, info2 = measure()
+        if ok2:
+            trace.append((i, "grow", info2["fill"]))
+            continue
+        zoom(-1)                    # 放大就装不下 -> 退回并收工
+        ok3, info3 = measure()
+        trace.append((i, "stop", info3 and info3["fill"]))
+        return {"ok": ok3, "rounds": i + 1, "pad_px": pad_px,
+                "whole_sheet": whole_sheet, "info": info3, "trace": trace}
+    ok, info = measure()
+    return {"ok": ok, "rounds": max_rounds * 2, "pad_px": pad_px,
+            "whole_sheet": whole_sheet, "info": info, "trace": trace}
 
 
 # ---------------------------------------------------------------- 打开电路
@@ -620,7 +794,7 @@ def capture_schematic(ms14_path, out_path, log=print):
     p, ww, hh = capture_window(h, out_path)
     if os.path.isfile(tmp):
         os.remove(tmp)
-    ok, info = content_fits(p, h)
+    ok, info = content_fits(p, h, pad_px=6, whole_sheet=True)
     return {"path": p, "width": ww, "height": hh, "zoom": z,
             "content_ok": ok, "content": info,
             "method": "PrintWindow(PW_RENDERFULLCONTENT) + GetDIBits -> zlib PNG",

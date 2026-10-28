@@ -1,0 +1,97 @@
+{
+  "name": "case_b_rectifier",
+  "components": [
+    {
+      "refdes": "V1",
+      "family": "SIGNAL_VOLTAGE_SOURCES",
+      "part": "AC_VOLTAGE",
+      "value": 5.0,
+      "params": {
+        "5": 50.0
+      },
+      "position": [
+        300.0,
+        300.0
+      ]
+    },
+    {
+      "refdes": "D1",
+      "family": "DIODE",
+      "part": "1N4007G",
+      "value": null,
+      "params": {},
+      "position": [
+        660.0,
+        300.0
+      ]
+    },
+    {
+      "refdes": "R1",
+      "family": "RESISTOR",
+      "part": "RESISTOR_VIRTUAL",
+      "value": 1000.0,
+      "params": {},
+      "position": [
+        780.0,
+        460.0
+      ]
+    },
+    {
+      "refdes": "GND1",
+      "family": "POWER_SOURCES",
+      "part": "GROUND",
+      "value": null,
+      "params": {},
+      "position": [
+        300.0,
+        620.0
+      ]
+    }
+  ],
+  "nets": [
+    {
+      "name": "in",
+      "pins": [
+        "V1.1",
+        "D1.A"
+      ]
+    },
+    {
+      "name": "out",
+      "pins": [
+        "D1.K",
+        "R1.1"
+      ]
+    },
+    {
+      "name": "0",
+      "pins": [
+        "V1.2",
+        "R1.2",
+        "GND1.1"
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "refdes": "P_in",
+      "kind": "V",
+      "net": "in",
+      "at": null
+    },
+    {
+      "refdes": "P_out",
+      "kind": "V",
+      "net": "out",
+      "at": null
+    }
+  ],
+  "simulation": {
+    "analysis": "transient",
+    "start": 0.0,
+    "stop": 0.1,
+    "step": null,
+    "sample_rate": 100000.0
+  },
+  "version": 1
+}

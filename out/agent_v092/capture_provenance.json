@@ -1,0 +1,94 @@
+{
+  "version": "v0.9.2",
+  "capture_entry": "tools/screenshot.py: capture_schematic / capture_simulation",
+  "capture_method": "PrintWindow(PW_RENDERFULLCONTENT) + GetDIBits -> zlib PNG（真实窗口位图，非 API 渲染）",
+  "note": "PNG 与同目录 .ms14 / waveform.csv 的 SHA-256 关联，用于证明截图对应哪份电路与哪次仿真",
+  "cases": {
+    "case_a_rc": {
+      "01_schematic.png": {
+        "bytes": 39281,
+        "sha256": "3d43591d5686aeb05408b09d584b0bc9ef724249fdb2eaef3c5d9a963ee51aef"
+      },
+      "02_simulation.png": {
+        "bytes": 14413,
+        "sha256": "72ed98ae15b76b633876ada80c93352bbcdf19f7f563c6fcad2f69005aa0a432"
+      },
+      "circuit.ms14": {
+        "bytes": 31741,
+        "sha256": "ec9cd095e8874accd3df962d6e182119300ae2f3cb2895ae70287442de9547ca"
+      },
+      "circuit.ir.json": {
+        "bytes": 1623,
+        "sha256": "e675307a03be63ac434ecfae9220c7432a90c7328e9f35d1f8bfe6f16859e6ac"
+      },
+      "waveform.csv": {
+        "bytes": 34321,
+        "sha256": "380db5883fb176817d9f0481a4fde5d5d94482f9b421e3a6f7e404ef7e4b34a3"
+      },
+      "sim_record.json": {
+        "bytes": 1817,
+        "sha256": "d5fc81f16f397afa1fdf03c17037966ee579cd0a563a86c1c9219b869755113c"
+      },
+      "trace.jsonl": {
+        "bytes": 23197,
+        "sha256": "88a24a627ad31db659eb86cbeead0299da3e15bbf2c1c177140266bb3229f80a"
+      }
+    },
+    "case_b_rectifier": {
+      "01_schematic.png": {
+        "bytes": 38454,
+        "sha256": "0ffee57e1d9218b9795009ccb0f763ff071328ef41c74afae90efd68189a1d6b"
+      },
+      "02_simulation.png": {
+        "bytes": 14873,
+        "sha256": "d57c83087df7365e2143f987957ad04f12bc0eb9f4d0e119f17c8cabcb38cf4a"
+      },
+      "circuit.ms14": {
+        "bytes": 32783,
+        "sha256": "18896574b7030a970ad0b498ee88eabd6b36e951b581a7bc565e14ee8a5b3fba"
+      },
+      "circuit.ir.json": {
+        "bytes": 1602,
+        "sha256": "8c8de40ee947a6736da1eab9b02a82ee001bc64c9e92de8b89f8a025870e3822"
+      },
+      "waveform.csv": {
+        "bytes": 338335,
+        "sha256": "e3932b63022a8dc29bb59fe445c0e0d954839b65451c4e592d14492d9043bfd4"
+      },
+      "sim_record.json": {
+        "bytes": 1812,
+        "sha256": "49d7aec474a459fdbc11fd1e3b28a459a6cd4ae6d28e5171e0843f944ea61cac"
+      },
+      "trace.jsonl": {
+        "bytes": 24017,
+        "sha256": "13747d42dacd2ee742ab397da0fb80124157d3791b451990fd02dcc4637acdcd"
+      }
+    },
+    "case_c_iterative": {
+      "01_schematic.png": {
+        "bytes": 40119,
+        "sha256": "9fe9fc49e86229ad08c5d247945cd5a0ccf1e8702cef8bd6a0e02883674ce77f"
+      },
+      "02_simulation.png": {
+        "bytes": 14317,
+        "sha256": "295866d0bbffc0c735249f05bd9b371b916a84dd1a84300fa5b2a2100be25560"
+      },
+      "circuit.ms14": {
+        "bytes": 38007,
+        "sha256": "e9309efc034e4600311cc3cc8b08d509c8899a211c15447192f50c2cd156e92d"
+      },
+      "circuit.ir.json": {
+        "bytes": 2179,
+        "sha256": "9de6811631abc5e4f2aaebeae4540fbf0b88cd956a19e6b69f9589dccce71630"
+      },
+      "waveform.csv": {
+        "bytes": 34405,
+        "sha256": "d383f9ccea235ad8b1e7d08fae1c39f7220fc3a63cd0ae976fd9dc3694d65f9e"
+      },
+      "trace.jsonl": {
+        "bytes": 63769,
+        "sha256": "5c4734b85e88211820246c6f783698c8c4f74740cbcfe87e27c741b78cbbb9a4"
+      }
+    }
+  }
+}

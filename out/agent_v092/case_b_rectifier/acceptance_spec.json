@@ -1,0 +1,11 @@
+{
+  "mode": "rectifier",
+  "in_col": 1,
+  "out_col": 2,
+  "checks": {
+    "input_peak":    { "target": 5.0, "tol_pct": 10 },
+    "input_freq_hz": { "target": 50,  "tol_pct": 2 },
+    "neg_ratio_max": 0.05,
+    "pos_ratio_min": 0.60
+  }
+}

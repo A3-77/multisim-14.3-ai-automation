@@ -93,3 +93,7 @@ Thumbs.db
 desktop.ini
 probe_template.ms14 (Security copy)
 out/agent_v08/**/.inject-*.done
+
+# v0.9.2 Agent 自主设计验收证据（报告直接引用，必须能被点开）
+!out/agent_v092/
+!out/agent_v092/**

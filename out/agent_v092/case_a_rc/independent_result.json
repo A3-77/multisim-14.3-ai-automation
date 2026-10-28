@@ -1,0 +1,70 @@
+{
+  "independent": true,
+  "method": "从 waveform.csv 原始采样点重算（过零点测频 + 最小二乘正弦拟合）",
+  "mode": "sine_gain",
+  "measured": {
+    "csv": "out/agent_v092/case_a_rc/waveform.csv",
+    "columns": [
+      "t",
+      "V(探针1)",
+      "V(探针2)"
+    ],
+    "n_samples": 1000,
+    "t_range": [
+      0.0,
+      0.004995
+    ],
+    "input_freq_hz": 999.9954,
+    "input_zero_crossings": 5,
+    "input_peak_v": 1.995261,
+    "input_min_v": -0.997631,
+    "input_max_v": 0.997631,
+    "output_min_v": -0.445716,
+    "output_max_v": 0.552992,
+    "output_mean_v": 0.025616,
+    "fit_skip_frac": 0.3,
+    "fit_samples": 700,
+    "input_amp_v": 0.996788,
+    "output_amp_v": 0.444673,
+    "gain": 0.446106,
+    "phase_deg": -63.5395,
+    "fit_residual_in": 0.001016,
+    "fit_residual_out": 0.000812,
+    "cutoff_hz_derived": 498.451
+  },
+  "criteria": [
+    {
+      "name": "input_freq_hz",
+      "value": 999.995436,
+      "target": 1000,
+      "tol_pct": 2,
+      "err_pct": -0.0,
+      "pass": true
+    },
+    {
+      "name": "input_peak",
+      "value": 0.997631,
+      "target": 1.0,
+      "tol_pct": 10,
+      "err_pct": -0.237,
+      "pass": true
+    },
+    {
+      "name": "gain",
+      "value": 0.446106,
+      "target": 0.5,
+      "tol_pct": 20,
+      "err_pct": -10.779,
+      "pass": true
+    },
+    {
+      "name": "cutoff_hz",
+      "value": 498.451001,
+      "target": 500,
+      "tol_pct": 10,
+      "err_pct": -0.31,
+      "pass": true
+    }
+  ],
+  "pass": true
+}
