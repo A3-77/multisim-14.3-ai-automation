@@ -43,17 +43,25 @@
     tee             2 串联 + 1 到地(电阻，中间级)  T 型网络
     ladder          其它（≥2 串联，≥1 到地）      二阶 RC 梯形
     halfwave_rectifier  1 二极管串联 + 1 电阻到地  半波整流（v0.9 新增）
+    parallel_shunt  某节点挂 2 个到地元件         分压 + 旁路电容 / RC 并联负载
+                                                  （v0.10.0 新增）
 
 `halfwave_rectifier` 是唯一走 `KIND_TEMPLATES` 模板表的拓扑，也是唯一带
 **准入闸门**的拓扑（`_check_diode_topology`）：其余 6 类只要结构对上就放行，
 二极管则必须精确匹配那一种接法。原因见该函数的 docstring。
+
+v0.10.0 起多了一条：**同一节点最多 2 个到地元件**（`parallel_shunt`）。
+
+这是教学电路里出现频率最高的一类形状 —— 分压器 + 旁路电容、RC 并联负载、
+电阻并联做等效值，全都是"一个节点上两个元件一起下地"。它的几何只是把
+第 2 个元件在同一行往右挪半格（`SHUNT_DX`），不改动任何已验收的坐标。
 
 明确拒绝（不是"排不出来"，是"这类拓扑还没验过"）：
 
     reason           含义
     --------------  --------------------------------------------
     fork            一个节点有 2 条向下的主干（真正的并联支路 / 跨级连接）
-    parallel_shunt  一个节点有 2 个到地元件（并联到地）
+    parallel_shunt  一个节点有 3 个及以上到地元件（2 个已放开）
     island          元件和电源不连通（悬空 / 独立子电路）
     cycle           拓扑回到走过的节点（环路 / 反馈）
     open_pin        元件的另一端没接线
@@ -66,6 +74,10 @@ import circuit_ir as irmod
 # 超过 4 级时符号排布是否还看得清，没实测过。
 MAX_STAGES = 4
 MAX_SHUNTS = 4
+
+# 同一节点上最多几个到地元件（v0.10.0）。1 个是 v0.1~v0.9 就支持的形状，
+# 2 个是这一版放开的"并联到地"；3 个及以上没验过，明确拒绝。
+MAX_SHUNTS_PER_NODE = 2
 
 # 坐标网格。源独占最左一列，各级从源右边一格开始；串联元件在级与级之间，
 # 并联元件挂在级列正下方，地在左下。
@@ -80,6 +92,13 @@ DX = 240.0
 Y_MAIN = 300.0
 Y_SHUNT = 460.0
 Y_GND = 620.0
+
+# 同一节点上第 2 个到地元件相对本级的水平偏移（v0.10.0）。
+#
+# 取值 DX/2 = 120：元件符号宽约 40~60，120 的间距让两个符号之间留出
+# 一条能看见的竖线，又不会挤到隔壁级的列（隔壁列在 ±DX）。两个元件
+# 摆在同一行 Y_SHUNT 上，"并联"这件事在图上是一眼能看出来的横排。
+SHUNT_DX = DX / 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -141,26 +160,36 @@ class LayoutError(Exception):
 class Stage(object):
     """主干上的一级。
 
-    `net`   这一级对应的网络
+    `net`    这一级对应的网络
     `series` 从这一级往下走的串联元件（最后一级没有）
-    `shunt`  挂在这一级到地的并联元件（可能没有）
+    `shunts` 挂在这一级到地的并联元件（0 个、1 个，或 v0.10.0 起的 2 个）
+
+    `shunt` 是 `shunts[0]` 的只读别名 —— v0.1~v0.9 的代码、测试、文档都只认
+    "一级一个到地元件"，保留它可以让那些地方一个字节都不用改。新代码请用
+    `shunts`，别再用 `shunt`（它会悄悄忽略第 2 个元件）。
     """
 
-    __slots__ = ("index", "net", "series", "shunt")
+    __slots__ = ("index", "net", "series", "shunts")
 
-    def __init__(self, index, net, series=None, shunt=None):
+    def __init__(self, index, net, series=None, shunts=None):
         self.index = index
         self.net = net
         self.series = series
-        self.shunt = shunt
+        self.shunts = list(shunts or ())
+
+    @property
+    def shunt(self):
+        """第一个到地元件；没有则 None。**只看第一个**，见类 docstring。"""
+        return self.shunts[0] if self.shunts else None
 
     def to_dict(self):
         return {"index": self.index, "net": self.net,
-                "series": self.series, "shunt": self.shunt}
+                "series": self.series, "shunt": self.shunt,
+                "shunts": list(self.shunts)}
 
     def __repr__(self):
-        return "Stage(%d, %r, series=%r, shunt=%r)" % (
-            self.index, self.net, self.series, self.shunt)
+        return "Stage(%d, %r, series=%r, shunts=%r)" % (
+            self.index, self.net, self.series, self.shunts)
 
 
 class Topology(object):
@@ -181,7 +210,8 @@ class Topology(object):
 
     @property
     def n_shunt(self):
-        return sum(1 for s in self.stages if s.shunt)
+        """到地元件的**个数**（不是有到地的级数）。"""
+        return sum(len(s.shunts) for s in self.stages)
 
     @property
     def elements(self):
@@ -190,8 +220,7 @@ class Topology(object):
         for s in self.stages:
             if s.series:
                 out.append(s.series)
-            if s.shunt:
-                out.append(s.shunt)
+            out.extend(s.shunts)
         return out
 
     def to_dict(self):
@@ -215,8 +244,8 @@ class Topology(object):
             bits = ["[%d] %s" % (s.index, s.net)]
             if s.series:
                 bits.append("--%s--> " % s.series)
-            if s.shunt:
-                bits.append("|%s->%s" % (s.shunt, self.gnd_net))
+            if s.shunts:
+                bits.append("|%s->%s" % ("||".join(s.shunts), self.gnd_net))
             lines.append("  " + " ".join(bits))
         return "\n".join(lines)
 
@@ -385,19 +414,22 @@ def analyze(ir):
                 "两条并排的支路（比如两组 RC 并联）还没验证过。"
                 "如果本意是并联，把其中一条改成到地的旁路。",
                 net=cur, branches=[r for r, _ in series])
-        if len(shunts) > 1:
+        if len(shunts) > MAX_SHUNTS_PER_NODE:
             raise _unsupported(
                 "parallel_shunt",
-                "网络 %r 有 %d 个到地元件（%s），是并联到地"
-                % (cur, len(shunts), ", ".join(r for r, _ in shunts)),
-                "P2 每一级最多一个到地元件。两个元件并联到地（比如电阻和"
-                "电容并联）还没验证过；拆成一个元件，或先用两个电路分别验。",
-                net=cur, shunts=[r for r, _ in shunts])
+                "网络 %r 有 %d 个到地元件（%s），超过上限 %d 个"
+                % (cur, len(shunts), ", ".join(r for r, _ in shunts),
+                   MAX_SHUNTS_PER_NODE),
+                "一个节点上最多挂 %d 个到地元件（v0.10.0 放开到 2 个："
+                "电阻并联、电阻并联电容都验过）。%d 个及以上还没验过，"
+                "先把其中几个合并成一个等效元件。"
+                % (MAX_SHUNTS_PER_NODE, MAX_SHUNTS_PER_NODE + 1),
+                net=cur, shunts=[r for r, _ in shunts],
+                limit=MAX_SHUNTS_PER_NODE)
 
-        st = Stage(index=depth, net=cur)
-        if shunts:
-            st.shunt = shunts[0][0]
-            visited.add(st.shunt)
+        st = Stage(index=depth, net=cur, shunts=[r for r, _ in shunts])
+        for r, _ in shunts:
+            visited.add(r)
         if not series:
             stages.append(st)
             break
@@ -430,11 +462,11 @@ def analyze(ir):
             "不是技术上做不到，是超过 %d 级时符号排布没实测过。"
             "先拆成子电路分别验。" % MAX_STAGES,
             count=len(stages) - 1, limit=MAX_STAGES)
-    if sum(1 for s in stages if s.shunt) > MAX_SHUNTS:
+    if sum(len(s.shunts) for s in stages) > MAX_SHUNTS:
         raise _unsupported(
             "too_many_shunts",
-            "到地支路有 %d 个，超过验证上限 %d 个"
-            % (sum(1 for s in stages if s.shunt), MAX_SHUNTS),
+            "到地元件有 %d 个，超过验证上限 %d 个"
+            % (sum(len(s.shunts) for s in stages), MAX_SHUNTS),
             "同上：不是做不到，是没验过。", limit=MAX_SHUNTS)
 
     kind = _classify(ir, stages)
@@ -484,6 +516,15 @@ def _check_diode_topology(ir, stages, kind):
                "电容滤波 / 峰值检波（二极管 + 电容）的波形和取数方式都还没验过，"
                "先去掉电容再仿真。")
 
+    # v0.10.0 放开了"一个节点 2 个到地元件"，但**不含二极管电路**：
+    # 二极管 + 并联负载的取数口径（哪个是负载电流、纹波怎么算）还没定。
+    if any(len(s.shunts) > 1 for s in stages):
+        reject("diode_parallel_load",
+               "二极管电路里有一个节点挂了 %d 个到地元件"
+               % max(len(s.shunts) for s in stages),
+               "v0.10.0 的并联到地只放开给线性元件（电阻 / 电容 / 电源）。"
+               "二极管 + 并联负载的测量口径还没定，先改成单个负载电阻。")
+
     if kind != "halfwave_rectifier":
         reject("diode_template_unverified",
                "带二极管的电路被判定为 %r，不是已验证的半波整流模板" % kind,
@@ -506,6 +547,12 @@ def _classify(ir, stages):
     """按"串联数 + 到地数 + 元件类型"给出模板名。"""
     n_series = len(stages) - 1
     shunts = [s for s in stages if s.shunt]
+
+    # v0.10.0：同一节点挂 2 个到地元件 —— 先判它。
+    # 排在 shunt_load / divider 之前，否则"电源 + 两个并联电阻"会被叫成
+    # shunt_load，"分压器 + 旁路电容"会被叫成 divider，名字错了后面全跟着错。
+    if any(len(s.shunts) > 1 for s in stages):
+        return "parallel_shunt"
 
     if n_series == 0:
         return "shunt_load"
@@ -531,6 +578,18 @@ def _classify(ir, stages):
 # ---------------------------------------------------------------------------
 # 第二步：坐标布局（不认识电路语义）
 # ---------------------------------------------------------------------------
+def _shunt_offset(j, k):
+    """同一节点上第 j 个（共 k 个）到地元件相对本级列的水平偏移。
+
+    k == 1 -> 0：和 v0.1~v0.9 算出来的坐标**完全一致**，一个字节都不变
+               （已验收的 6 类拓扑坐标被真机测试固定住了，不能顺手改）。
+    k == 2 -> ∓SHUNT_DX/2：以本级列为对称轴，左右各半格。
+    """
+    if k <= 1:
+        return 0.0
+    return (j - (k - 1) / 2.0) * SHUNT_DX
+
+
 def plan(topology):
     """按拓扑给每个元件一个坐标。返回 {refdes: [x, y]}。
 
@@ -549,9 +608,10 @@ def plan(topology):
         if st.series:
             # 串联元件摆在"本级 -> 下一级"的中间，画出来是一段横线
             pos[st.series] = [x + DX / 2.0, Y_MAIN]
-        if st.shunt:
-            # 并联元件挂在本级正下方，画出来是一段竖线
-            pos[st.shunt] = [x, Y_SHUNT]
+        for j, ref in enumerate(st.shunts):
+            # 并联元件挂在本级正下方，画出来是一段竖线；
+            # 有 2 个时左右各偏半格，同一行并排 —— "并联"一眼可见
+            pos[ref] = [x + _shunt_offset(j, len(st.shunts)), Y_SHUNT]
     return pos
 
 
@@ -565,8 +625,9 @@ def _plan_from_template(topology, tpl):
         x = _col_x(st.index)
         if st.series:
             pos[st.series] = [x + DX * sx, Y_MAIN + sy]
-        if st.shunt:
-            pos[st.shunt] = [x + DX * hx, Y_SHUNT + hy]
+        for j, ref in enumerate(st.shunts):
+            pos[ref] = [x + DX * hx + _shunt_offset(j, len(st.shunts)),
+                        Y_SHUNT + hy]
     return pos
 
 

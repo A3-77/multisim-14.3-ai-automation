@@ -249,21 +249,48 @@ def main():
 
         # ---------------------------------------------------------------- 8
         print("\n[8] 拓扑不支持时必须报错，不能硬排坐标")
-        b = S.create_circuit("parallel")
+        # v0.10.0：一个节点 2 个到地元件已经放开，所以这里用 3 个来测拒绝路径
+        b = S.create_circuit("parallel3")
         bid = b["circuit_id"]
         S.add_component(bid, "POWER_SOURCES", "DC_POWER", "V1", value=5.0)
-        S.add_component(bid, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
-        S.add_component(bid, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=1000.0)
+        for r in ("R1", "R2", "R3"):
+            S.add_component(bid, "RESISTOR", "RESISTOR_VIRTUAL", r, value=1000.0)
         S.add_component(bid, "POWER_SOURCES", "GROUND", "GND1")
-        S.connect(bid, [["V1", "+"], ["R1", "1"], ["R2", "1"]])
-        S.connect(bid, [["R1", "2"], ["R2", "2"], ["V1", "-"], ["GND1", "1"]])
+        S.connect(bid, [["V1", "+"], ["R1", "1"], ["R2", "1"], ["R3", "1"]])
+        S.connect(bid, [["R1", "2"], ["R2", "2"], ["R3", "2"],
+                        ["V1", "-"], ["GND1", "1"]])
         irb, _mb = S._load(bid)
-        e = expect_err("并联到地 -> LAYOUT_UNSUPPORTED",
+        e = expect_err("3 个并联到地 -> LAYOUT_UNSUPPORTED",
                        lambda: S.plan_layout(irb), "LAYOUT_UNSUPPORTED",
-                       "并联到地")
+                       "上限")
         check("  错误带 reason=parallel_shunt",
               e is not None and e.context.get("reason") == "parallel_shunt",
               str(e.context if e else None))
+
+        # v0.10.0 新增：2 个并联到地必须放行，并且拓扑名是 parallel_shunt
+        b2 = S.create_circuit("parallel2")
+        b2id = b2["circuit_id"]
+        S.add_component(b2id, "POWER_SOURCES", "DC_POWER", "V1", value=5.0)
+        S.add_component(b2id, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(b2id, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=1000.0)
+        S.add_component(b2id, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1",
+                        value=100e-9)
+        S.add_component(b2id, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(b2id, [["V1", "+"], ["R1", "1"]], net="in")
+        S.connect(b2id, [["R1", "2"], ["R2", "1"], ["C1", "1"]], net="n1")
+        S.connect(b2id, [["R2", "2"], ["C1", "2"], ["V1", "-"], ["GND1", "1"]],
+                 net="0")
+        irb2, _mb2 = S._load(b2id)
+        tb2 = S.topology_of(irb2)
+        check("2 个到地元件 -> parallel_shunt 且放行",
+              tb2.kind == "parallel_shunt", tb2.kind)
+        check("  两个到地元件都记在 n1 那一级",
+              tb2.stages[1].shunts == ["R2", "C1"],
+              str(tb2.stages[1].shunts))
+        pb2 = S.plan_layout(irb2)
+        check("  两个并联元件拿到不同坐标",
+              pb2["R2"] != pb2["C1"], "%s / %s" % (pb2.get("R2"),
+                                                   pb2.get("C1")))
 
         # 悬空元件（cid 里那个没接线的 R2）也必须被拓扑层拦住
         irc, _mc = S._load(cid)
@@ -548,27 +575,32 @@ def main():
         t5 = S.get_circuit(cid3)["topology"]
         check("有探针后 complete=true", t5.get("complete") is True, str(t5))
 
-        # 能力边界 vs 接线问题：parallel_shunt 是"接完了但不会摆"
-        c4 = S.create_circuit("par")
+        # 能力边界 vs 接线问题：fork 是"接完了但不会摆"
+        # （v0.10.0 起 parallel_shunt 已经支持，所以这里改用仍然被拒绝的 fork）
+        c4 = S.create_circuit("fork")
         cid4 = c4["circuit_id"]
         S.add_component(cid4, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
                         value=1.0, frequency=1000.0)
         S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
         S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=10000.0)
+        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R3", value=10000.0)
         S.add_component(cid4, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=10e-9)
+        S.add_component(cid4, "CAPACITOR", "CAPACITOR_VIRTUAL", "C2", value=10e-9)
         S.add_component(cid4, "POWER_SOURCES", "GROUND", "GND1")
         S.connect(cid4, [["V1", "+"], ["R1", "1"]], net="in")
-        S.connect(cid4, [["R1", "2"], ["R2", "1"], ["C1", "1"]], net="out")
-        S.connect(cid4, [["R2", "2"], ["C1", "2"], ["V1", "-"], ["GND1", "1"]],
+        S.connect(cid4, [["R1", "2"], ["R2", "1"], ["R3", "1"]], net="n1")
+        S.connect(cid4, [["R2", "2"], ["C1", "1"]], net="n2")
+        S.connect(cid4, [["R3", "2"], ["C2", "1"]], net="n3")
+        S.connect(cid4, [["C1", "2"], ["C2", "2"], ["V1", "-"], ["GND1", "1"]],
                  net="0")
-        S.add_probe(cid4, "out", name="P1")
+        S.add_probe(cid4, "n2", name="P1")
         t6 = S.get_circuit(cid4)["topology"]
-        check("parallel_shunt：supported=false",
-              t6.get("supported") is False, str(t6))
-        check("parallel_shunt：但 complete=true（电路是接完的）",
-              t6.get("complete") is True, str(t6))
+        check("fork：supported=false",
+              t6.get("supported") is False, str(t6.get("kind")))
+        check("fork：但 complete=true（电路是接完的）",
+              t6.get("complete") is True, str(t6.get("issues")))
         check("reason 指出是哪一类拓扑问题",
-              t6.get("reason") == "parallel_shunt", str(t6.get("reason")))
+              t6.get("reason") == "fork", str(t6.get("reason")))
 
         # ---------------------------------------------------------------- 17
         print("\n[17] v0.8.0：simulate 的 start / stop 校验（不真的跑 COM）")

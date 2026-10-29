@@ -386,6 +386,25 @@ def chart_v060():
     write("v0.6.0-mcp-tools.svg", svg(880, 272, b, "v0.6.0 MCP 工具"))
 
 
+# ------------------------------------------------------------------------ 图 10
+def chart_v100():
+    """v0.10.0：同一节点 2 个到地元件（C1 ∥ R2）的真机波形。"""
+    _, t, ch = read_csv("out/agent_v10/parallel/case_a_rc_parallel.csv")
+    keep = [i for i, ti in enumerate(t) if ti <= 0.0032]
+    t = [t[i] for i in keep]
+    ch = [[c[i] for i in keep] for c in ch]
+    t, s = thin(t, [ch[0], ch[1]], 900)
+
+    body = [text(24, 30, "v0.10.0 · 同一节点 2 个到地元件：C1(159.155nF) ∥ R2(1kΩ)", 15, INK, "600"),
+            text(24, 50, "V1 1V/1kHz → R1 1kΩ → n1，n1 上 C1 与 R2 一起下地。实测增益 0.44690（理论 0.44721，−0.07%），相位 −26.65°（理论 −26.57°）", 11.5, MUTED),
+            text(24, 68, "反证：如果只有 C1 在网表里，增益会是 0.7071；只有 R2 则是 0.5000。实测 0.4469 只可能来自两者并联", 11.5, "#b45309")]
+    body += panel(24, 80, 832, 250, t, s, [C_IN, C_OUT], ["V(输入)", "V(输出)"],
+                  0.0032, -1.05, 1.05, xlabel="时间 (ms)", ylabel="电压 (V)",
+                  xunit=1e3)
+    write("v0.10.0-parallel-shunt.svg",
+          svg(880, 340, body, "v0.10.0 并联到地波形"))
+
+
 if __name__ == "__main__":
     print("生成 SVG：")
     chart_pipeline()
@@ -397,3 +416,4 @@ if __name__ == "__main__":
     chart_v070()
     chart_v080()
     chart_v090()
+    chart_v100()

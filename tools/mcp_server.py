@@ -286,8 +286,8 @@ TOOLS = [
             "返回里的 ms14 / waveform / record 是**相对仓库根目录**的路径。\n"
             "返回里还带 topology（这次仿真按什么拓扑布局的）。拓扑不在支持范围"
             "内时不会硬跑，而是返回 LAYOUT_UNSUPPORTED + context.reason；"
-            "reason 有 fork（一个节点两条主干）/ parallel_shunt（并联到地）/ "
-            "island（元件和电源不连通）/ too_many_stages 等。"
+            "reason 有 fork（一个节点两条主干）/ parallel_shunt（同一节点 3 个及以上"
+            "到地元件；2 个已支持）/ island（元件和电源不连通）/ too_many_stages 等。"
         ),
         "inputSchema": {
             "type": "object",
@@ -483,9 +483,10 @@ def handle(msg):
                 "探针只有 probe_id 一个身份（P1），measure / get_waveform "
                 "都用它指定通道，不要用 Multisim 的显示名或输出名。"
                 "只支持单电源、单主干 + 到地并联支路的拓扑"
-                "（分压 / 旁路电容 / T 型 / 多级 RC 梯形）；"
-                "真正的并联支路、并联到地、反馈、多电源会报 "
-                "LAYOUT_UNSUPPORTED，context.reason 说明属于哪一类。"
+                "（分压 / 旁路电容 / T 型 / 多级 RC 梯形 / 半波整流 / "
+                "同一节点最多 2 个到地元件，比如分压 + 旁路电容）；"
+                "一个节点分出两条主干（fork）、同一节点 3 个及以上到地元件、"
+                "反馈、多电源会报 LAYOUT_UNSUPPORTED，context.reason 说明属于哪一类。"
                 "每个状态快照里都带 topology 字段，可以先看后端认为你搭的是"
                 "什么拓扑，再决定要不要 simulate。"
             ),

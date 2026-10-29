@@ -286,19 +286,37 @@ def theory_dc(ir):
 def theory(ir):
     """按 IR 里写的元件值算理论值（不是用 Multisim 报回来的值）。
 
-    目前只覆盖一阶 RC 低通（1 个 R + 1 个 C）。其它组合返回 None ——
-    没有理论模型就不做数值判定，避免"自己和自己比"。
+    两条路：
+
+    1. **一阶 RC 低通**（1 个 R + 1 个 C）走 `fitlib.lowpass_theory` ——
+       v0.3.0 起就是这个分支，输出字段（含 fc）被验收脚本依赖，不能动。
+    2. 其余走 `theory_ladder()`：单主干 + 到地并联的**精确复数解**。
+       v0.10.0 新增，覆盖同一节点多个到地元件（`parallel_shunt`）和二阶以上
+       梯形网络。以前这些拓扑拿不到理论值，只能靠验收脚本手算。
+
+    两条都算不出来就返回 None —— 没有理论模型就不做数值判定，
+    避免"自己和自己比"。
     """
     rs = [c for c in ir.components if c.family == "RESISTOR"]
     cs = [c for c in ir.components if c.family == "CAPACITOR"]
     src = next((c for c in ir.components
                 if c.family == "SIGNAL_VOLTAGE_SOURCES"), None)
-    if len(rs) != 1 or len(cs) != 1 or src is None:
-        return None
-    f = float((src.params or {}).get(5) or 0.0)
-    if not f:
-        return None
-    g, ph, x = fitlib.lowpass_theory(f, rs[0].value, cs[0].value)
-    return {"kind": "rc_lowpass", "gain": g, "phase_deg": math.degrees(ph),
-            "fc": fitlib.cutoff(rs[0].value, cs[0].value),
-            "r": rs[0].value, "c": cs[0].value, "freq": f}
+    if len(rs) == 1 and len(cs) == 1 and src is not None:
+        f = float((src.params or {}).get(5) or 0.0)
+        if f:
+            g, ph, x = fitlib.lowpass_theory(f, rs[0].value, cs[0].value)
+            return {"kind": "rc_lowpass", "gain": g,
+                    "phase_deg": math.degrees(ph),
+                    "fc": fitlib.cutoff(rs[0].value, cs[0].value),
+                    "r": rs[0].value, "c": cs[0].value, "freq": f}
+    return theory_ladder(ir)
+
+
+def theory_ladder(ir):
+    """单主干 + 到地并联的精确解 —— 实现在 `acmodel.py`（纯数学，可单测）。
+
+    这里只做一层转发，理由见 acmodel.py 文件头：`ir_sim` 一 import 就拉 COM，
+    而理论值必须在任何机器上都算得出来。
+    """
+    import acmodel
+    return acmodel.ladder_theory(ir)

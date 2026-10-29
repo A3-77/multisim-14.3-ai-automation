@@ -1,0 +1,202 @@
+{
+  "version": "v0.10.0",
+  "case_a": {
+    "circuit_id": "c-4b4e92db0e",
+    "sim_id": "s-0b00aa0e33",
+    "recompute": {
+      "n": 1600,
+      "vin_amp": 0.9967894955063362,
+      "vout_amp": 0.4454648843548892,
+      "gain": 0.44689965771419743,
+      "phase_deg": -26.645459731216278,
+      "t_range": [
+        0.002,
+        0.009995
+      ],
+      "skipped_periods": 2,
+      "mean_out": 0.0016460938375075277,
+      "full_window": {
+        "n": 2000,
+        "vin_amp": 0.9967898595717173,
+        "vout_amp": 0.44541793058743245,
+        "gain": 0.44685238950846834,
+        "phase_deg": -26.26597835948916
+      }
+    },
+    "theory": {
+      "kind": "ac_ladder",
+      "gain": 0.4472135954999579,
+      "phase_deg": -26.565051177077994,
+      "freq": 1000.0,
+      "topology": "parallel_shunt",
+      "n_series": 1,
+      "n_shunt": 2,
+      "z_in": 1581.1388300841897,
+      "stages": [
+        {
+          "from": "in",
+          "to": "n1",
+          "series": "R1",
+          "gain": 0.4472135954999579,
+          "phase_deg": -26.565051177077994
+        }
+      ]
+    },
+    "ms14": "out\\agent_v10\\parallel\\case_a_rc_parallel.ms14",
+    "csv": "out\\agent_v10\\parallel\\case_a_rc_parallel.csv"
+  },
+  "case_b": {
+    "circuit_id": "c-446cb73d7e",
+    "sim_id": "s-1ed3ca5260",
+    "recompute": {
+      "n": 1,
+      "mean": 2.5,
+      "min": 2.5,
+      "max": 2.5
+    },
+    "ms14": "out\\agent_v10\\parallel\\case_b_divider_bypass.ms14",
+    "csv": "out\\agent_v10\\parallel\\case_b_divider_bypass.csv"
+  },
+  "calls": [
+    {
+      "tool": "create_circuit",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "simulate",
+      "ok": true,
+      "elapsed": 24.12
+    },
+    {
+      "tool": "measure",
+      "ok": true,
+      "elapsed": 0.28
+    },
+    {
+      "tool": "get_waveform",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "create_circuit",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.24
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "simulate",
+      "ok": true,
+      "elapsed": 25.06
+    },
+    {
+      "tool": "measure",
+      "ok": true,
+      "elapsed": 0.26
+    },
+    {
+      "tool": "get_waveform",
+      "ok": true,
+      "elapsed": 0.19
+    }
+  ],
+  "n_calls": 27,
+  "n_errors": 0,
+  "total_s": 54.6,
+  "fails": [],
+  "pass": true
+}
