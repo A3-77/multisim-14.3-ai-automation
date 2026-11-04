@@ -56,6 +56,83 @@ def parallel(zs):
     return 1.0 / y
 
 
+def tree_theory(ir, topo, f):
+    """分叉树（v0.11.0）的精确交流解：**每条通路各算一个传递函数**。
+
+    树和梯形的区别只在"输出有几个"：梯形只有一条主干，所以只有一个 H；
+    树有几条到地的通路，就有几个输出节点。所以返回值从单个 gain 变成
+    `paths[]`，每个 path 有自己的 gain / phase。
+
+    算法两步：
+
+        1. 从叶往根算每个节点看向负载的输入阻抗
+               Z(node) = 并联( 每条支路：Z(元件) [+ Z(子节点)] )
+        2. 从根往下累乘每段分压
+               h *= Z(child) / ( Z(串联元件) + Z(child) )
+
+    一条通路的"输出"是它**最后一个串联元件之后的节点**（到地元件之前），
+    因为到地元件是负载、不是输出端。全 shunt 的通路输出就是根节点本身。
+
+    只认 R / C，遇到别的元件返回 None —— 和 `ladder_theory` 同一条规矩。
+    """
+    def z_in(node):
+        zs = []
+        for b in node.branches:
+            comp = ir.component(b.series)
+            z = impedance(comp, f) if comp is not None else None
+            if z is None:
+                return None
+            if b.child is None:
+                zs.append(z)
+            else:
+                zc = z_in(b.child)
+                if zc is None:
+                    return None
+                zs.append(z + zc)
+        return parallel(zs)
+
+    zroot = z_in(topo.root)
+    if zroot is None:
+        return None
+
+    paths = []
+    bad = []
+
+    def walk(node, h, acc):
+        for b in node.branches:
+            comp = ir.component(b.series)
+            zb = impedance(comp, f) if comp is not None else None
+            if zb is None:
+                bad.append(b.series)
+                return
+            if b.child is None:
+                paths.append({"elements": acc + [b.series],
+                              "output_net": node.net,
+                              "gain": abs(h),
+                              "phase_deg": math.degrees(math.atan2(h.imag, h.real))})
+                continue
+            zc = z_in(b.child)
+            if zc is None:
+                bad.append(b.series)
+                return
+            denom = zb + zc
+            if denom == 0:
+                bad.append(b.series)
+                return
+            walk(b.child, h * (zc / denom), acc + [b.series])
+
+    walk(topo.root, 1.0 + 0j, [])
+    if bad:
+        return None
+
+    single = paths[0] if len(paths) == 1 else None
+    return {"kind": "ac_tree", "freq": f, "topology": topo.kind,
+            "n_paths": len(paths), "paths": paths,
+            "gain": single["gain"] if single else None,
+            "phase_deg": single["phase_deg"] if single else None,
+            "z_in": abs(zroot)}
+
+
 def ladder_theory(ir):
     """单主干 + 到地并联的精确交流解。算不出来返回 None。
 
@@ -80,6 +157,11 @@ def ladder_theory(ir):
     f = float((src.params or {}).get(5) or 0.0)
     if not f:
         return None
+
+    # v0.11.0：分叉树没有"级"，走另一套解（每条通路一个传递函数）。
+    # 必须排在 `topo.stages` 之前 —— TreeTopology 根本没有这个属性。
+    if getattr(topo, "root", None) is not None:
+        return tree_theory(ir, topo, f)
 
     stages = topo.stages
 
