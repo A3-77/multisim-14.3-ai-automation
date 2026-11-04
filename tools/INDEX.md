@@ -15,7 +15,8 @@
 | `ir_compile.py` | IR → `.ms14`（只调用已验证 API，落盘前先跑校验） |
 | `ir_run.py` | IR 端到端验收（编译 → 仿真 → 拟合 → 与直接 API 基线比对） |
 | `circuit_session.py` | **MCP 会话层**：circuit_id 句柄 / 语义参数映射 / 结构化错误 / 统一返回对象；布局委托给 `layout.py`（v0.7.0） |
-| `layout.py` | **拓扑分析 + 坐标**（v0.7.0 P2 / v0.9 加一类）：`analyze()` 判断拓扑、`plan()` 生成坐标，两件事不混；支持单主干+到地并联（6 类模板）+ `halfwave_rectifier`（v0.9），其余明确拒绝 |
+| `layout.py` | **拓扑分析 + 坐标**（v0.7.0 P2 / v0.9 加一类 / v0.11.0 加分叉分流）：`analyze()` 判断拓扑、`plan()` 生成坐标，两件事不混；支持单主干+到地并联（6 类模板）+ `halfwave_rectifier`（v0.9）+ `parallel_shunt`（v0.10），检测到分叉时**整棵树交给 `layout_tree`** |
+| `layout_tree.py` | **分叉树布局**（v0.11.0 新增，产品代码）：一个节点分出 2+ 条向下主干时的递归布局。向下=深度、向右=支路；`wiring_hints()` 给每条网络算折点（`star` / `routes` / `tap`）。独立成模块的理由见 `docs/layout.md` 第 14.1 节 |
 | `registry.py` | **元件注册表运行时读取层**（v0.9 新增）：纯 JSON，不碰 Multisim。`ir_spec(family, part)` 是**闸门**——只有 `enabled` 里的元件才返回 spec，其余一律 `None` |
 | `build_registry.py` | **离线扫描器**（v0.9 新增）：扫 `corpus/samples14` + Multisim 官方样例，把每个元件的 `pins` / `pin_geometry` / `spice_template` / `donor` 抽成 `registry/components.json`。**零手写** |
 | `mcp_server.py` | **MCP Server**（JSON-RPC over stdio，8 个工具；stdout 只走协议；schema 就是 Agent 的 API 文档。v0.9：`add_component` 描述从 `PART_META` 自动生成） |
@@ -111,6 +112,46 @@
 
 `parts` 里有 192 条**不等于**支持 192 种。`parts` 只说明"donor 存在、引脚抽出来了"，
 `enabled` 才是"IR 白名单 + 布局模板 + 测试"三样都齐了。加一种元件 = 三件事，不是改一行 JSON。
+
+## 第 23 轮（v0.11.0 分叉树）
+
+结论落在 `docs/layout.md` 第 14 节。这一轮只加了一个产品文件和一支验收脚本。
+
+| 文件 | 性质 | 干什么 |
+|---|---|---|
+| `layout_tree.py` | 产品 | 递归树布局 + `wiring_hints`。`layout.py` 在 `_has_fork()` 判定成立时整棵交过来 |
+| `agent_acceptance/run_fork.py` | 验收 | Agent 视角端到端：两个 Case（并联 RC / 分叉+两级 DC），35 次 MCP 调用，不 import 任何项目模块，从 CSV 用 DFT 独立复算。产物 `out/agent_v11/fork/`（已入库） |
+
+## 第 24 轮（模电一单元作业实战）
+
+**不是调查，是拿这套工具真做一次作业。** 结论落在 `docs/hw/1单元作业.md`。
+新增的 `hw_*.py` 全部是**这一次的作业脚本**，不是产品代码，但都是能重跑的：
+每个都对应作业里的一个具体步骤，改改顶部的参数就能复用到下一份作业。
+
+| 文件 | 干什么 |
+|---|---|
+| `hw_docx_read.py` | 打印 docx 的段落 + 表格结构（读题第一步） |
+| `hw_docx_tables.py` | 只打表格，看清表头合并和空单元格 |
+| `hw_lab1.py` | **任务一**：共射极放大电路，RW 取 10% / 20% / 100% 三档，生成 `.ms14` → 仿真 → `task1_raw.json` |
+| `hw_task1_steady.py` | 从波形里截稳态窗口（96.97–99.97 ms），算 V_B / V_C / V_E / U_CE / A_v |
+| `hw_lab2.py` | **任务二**：741 滞回比较器 + 双向稳压管，三种输入条件，出 `task2_raw.json`。支持 `python tools/hw_lab2.py c1` 只跑一档 |
+| `hw_sch1.py` / `hw_sch2.py` | 生成**展示用**电路图（无探针、坐标压缩、隐藏多余标注），给作业交图 |
+| `hw_shot1.py` | 调 Multisim 截图接口出 PNG。`t1` / `t2` 选任务 |
+| `hw_draw_t1_table.py` / `hw_draw_t2_table.py` | 从 CSV 渲染波形图（表 1 三张、表 2 三张含 X-Y 滞回环） |
+| `hw_wires.py` | **画面隐患检查**：导线共线重叠 / 顶点压线 / 中段穿引脚 / **斜线段**。三个电路文件现在都"没有发现问题" |
+| `hw_pins.py` | 打印所有元件引脚绝对坐标 + 探针 LocalName（定坐标前必跑） |
+| `hw_dump_text.py` | 打印符号内所有 Text 子对象（`Output` / `Hidden` / `M20` / `M21`），查文字错位 |
+| `hw_nets.py` / `hw_geom.py` | dump 网络成员 / 元件几何，排查"连通性对但画面断" |
+| `hw_rename_zener.py` / `hw_make_zener.py` | 把 donor 里的 `&ASC1N4734A` 改成 `&ASC02DZ4.7`，造 4.7 V 稳压管 donor |
+| `hw_pot_*.py` / `hw_check_pot*.py` / `hw_probe_pot*.py` | 电位器阻值写不进去的排查过程（8 个 doubles 逐个试，只有 `[5]` 是总阻值）。结论见 `docs/hw/1单元作业.md` 避坑第 5 条 |
+| `hw_probe_*.py` / `_probe_*.py` | 运放 / 稳压管 donor 的引脚几何探测 |
+| `hw_clean_schematic.py` / `hw_crop.py` / `hw_csv_check.py` | 收尾：清标注、裁图、校验 CSV 通道数 |
+
+### 这一轮踩出来的三条硬规则
+
+1. **`Net.routes` 的折点顺序是「引脚 → 枢纽」**，写反了画面多一条斜线，不报错。
+2. **探针必须显式给坐标**（`Probe(at=[x, y])`），自动挑点落在导线拐角上会偶发不注册。
+3. **32 位跑仿真、64 位跑截图/画图** —— `runtime/py32` 里没有 PIL。
 
 ## 一次性脚本的用法
 
