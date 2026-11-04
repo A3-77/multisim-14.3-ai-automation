@@ -573,11 +573,33 @@ def plan_layout(ir, want_topology=False):
     """返回 {refdes: [x, y]}；want_topology=True 时返回 (Topology, pos)。
 
     拓扑不在支持范围内时抛 LAYOUT_UNSUPPORTED，**不猜坐标**。
+
+    树形拓扑（v0.11.0 起）算完坐标还会把**走线提示**写回 IR 的网络：
+    `route` 决定折线先横后竖还是先竖后横，`star` 让地网改成星型。
+    这两个字段是纯几何的（不影响连通性），但缺了它们，分叉处的导线会压在
+    兄弟支路的引脚上（真机实测会短路），所以必须在这里补。
     """
     try:
         topo, pos = layoutmod.plan_ir(ir)
     except layoutmod.LayoutError as e:
         raise SessionError(e.code, e.message, e.hint, e.context)
+
+    hints = getattr(topo, "root", None) is not None
+    if hints:
+        import layout_tree
+        for net_name, h in layout_tree.wiring_hints(topo).items():
+            net = ir.net(net_name)
+            if net is None:
+                continue
+            if h.get("route"):
+                net.route = h["route"]
+            if h.get("star"):
+                net.star = h["star"]
+            if h.get("routes"):
+                net.routes = h["routes"]
+            if h.get("tap"):
+                net.tap = True
+
     return (topo, pos) if want_topology else pos
 
 

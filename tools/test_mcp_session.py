@@ -575,32 +575,62 @@ def main():
         t5 = S.get_circuit(cid3)["topology"]
         check("有探针后 complete=true", t5.get("complete") is True, str(t5))
 
-        # 能力边界 vs 接线问题：fork 是"接完了但不会摆"
-        # （v0.10.0 起 parallel_shunt 已经支持，所以这里改用仍然被拒绝的 fork）
-        c4 = S.create_circuit("fork")
+        # 能力边界 vs 接线问题：3 个并联到地是"接完了但不会摆"
+        # （v0.10.0 放开 2 个、v0.11.0 放开分叉，所以这里用仍然被拒绝的 3 并联）
+        c4 = S.create_circuit("par3")
         cid4 = c4["circuit_id"]
-        S.add_component(cid4, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
-                        value=1.0, frequency=1000.0)
+        S.add_component(cid4, "POWER_SOURCES", "DC_POWER", "V1", value=5.0)
         S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
-        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=10000.0)
-        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R3", value=10000.0)
-        S.add_component(cid4, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=10e-9)
-        S.add_component(cid4, "CAPACITOR", "CAPACITOR_VIRTUAL", "C2", value=10e-9)
+        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=2000.0)
+        S.add_component(cid4, "RESISTOR", "RESISTOR_VIRTUAL", "R3", value=3000.0)
         S.add_component(cid4, "POWER_SOURCES", "GROUND", "GND1")
-        S.connect(cid4, [["V1", "+"], ["R1", "1"]], net="in")
-        S.connect(cid4, [["R1", "2"], ["R2", "1"], ["R3", "1"]], net="n1")
-        S.connect(cid4, [["R2", "2"], ["C1", "1"]], net="n2")
-        S.connect(cid4, [["R3", "2"], ["C2", "1"]], net="n3")
-        S.connect(cid4, [["C1", "2"], ["C2", "2"], ["V1", "-"], ["GND1", "1"]],
-                 net="0")
-        S.add_probe(cid4, "n2", name="P1")
+        S.connect(cid4, [["V1", "+"], ["R1", "1"], ["R2", "1"], ["R3", "1"]],
+                  net="in")
+        S.connect(cid4, [["R1", "2"], ["R2", "2"], ["R3", "2"],
+                         ["V1", "-"], ["GND1", "1"]], net="0")
+        S.add_probe(cid4, "in", name="P1")
         t6 = S.get_circuit(cid4)["topology"]
-        check("fork：supported=false",
+        check("3 个并联到地：supported=false",
               t6.get("supported") is False, str(t6.get("kind")))
-        check("fork：但 complete=true（电路是接完的）",
+        check("3 个并联到地：但 complete=true（电路是接完的）",
               t6.get("complete") is True, str(t6.get("issues")))
         check("reason 指出是哪一类拓扑问题",
-              t6.get("reason") == "fork", str(t6.get("reason")))
+              t6.get("reason") == "parallel_shunt", str(t6.get("reason")))
+
+        # ---------------------------------------------------------------- 16b
+        print("\n[16b] v0.11.0：分叉树（一个节点两条主干）必须放行")
+        c5 = S.create_circuit("fork")
+        cid5 = c5["circuit_id"]
+        S.add_component(cid5, "SIGNAL_VOLTAGE_SOURCES", "AC_VOLTAGE", "V1",
+                        value=1.0, frequency=1000.0)
+        S.add_component(cid5, "RESISTOR", "RESISTOR_VIRTUAL", "R1", value=1000.0)
+        S.add_component(cid5, "RESISTOR", "RESISTOR_VIRTUAL", "R2", value=1000.0)
+        S.add_component(cid5, "RESISTOR", "RESISTOR_VIRTUAL", "R3", value=2000.0)
+        S.add_component(cid5, "CAPACITOR", "CAPACITOR_VIRTUAL", "C1", value=100e-9)
+        S.add_component(cid5, "CAPACITOR", "CAPACITOR_VIRTUAL", "C2", value=50e-9)
+        S.add_component(cid5, "POWER_SOURCES", "GROUND", "GND1")
+        S.connect(cid5, [["V1", "+"], ["R1", "1"]], net="in")
+        S.connect(cid5, [["R1", "2"], ["R2", "1"], ["R3", "1"]], net="n1")
+        S.connect(cid5, [["R2", "2"], ["C1", "1"]], net="n2")
+        S.connect(cid5, [["R3", "2"], ["C2", "1"]], net="n3")
+        S.connect(cid5, [["C1", "2"], ["C2", "2"], ["V1", "-"], ["GND1", "1"]],
+                 net="0")
+        S.add_probe(cid5, "n2", name="P1")
+        t7 = S.get_circuit(cid5)["topology"]
+        check("两条主干：supported=true", t7.get("supported") is True, str(t7.get("kind")))
+        check("  kind=parallel_branch", t7.get("kind") == "parallel_branch",
+              str(t7.get("kind")))
+        check("  paths 列出两条通路", len(t7.get("paths") or []) == 2,
+              str(t7.get("paths")))
+        check("  forks 指出分叉点是 n1",
+              (t7.get("forks") or [{}])[0].get("net") == "n1", str(t7.get("forks")))
+        pl = S.plan_layout(S._load(cid5)[0])
+        check("  两条支路并排（x 不同）", pl["R2"][0] != pl["R3"][0],
+              "%s vs %s" % (pl["R2"], pl["R3"]))
+        check("  两条支路同一层（y 相同）", pl["R2"][1] == pl["R3"][1],
+              str(pl["R2"][1]))
+        check("  地只有一个且在最下方",
+              pl["GND1"][1] > max(pl["C1"][1], pl["C2"][1]), str(pl["GND1"]))
 
         # ---------------------------------------------------------------- 17
         print("\n[17] v0.8.0：simulate 的 start / stop 校验（不真的跑 COM）")

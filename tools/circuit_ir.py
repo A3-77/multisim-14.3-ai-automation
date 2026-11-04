@@ -138,6 +138,8 @@ class Component:
     value: float = None
     params: dict = field(default_factory=dict)     # {参数序号(int): 数值}
     position: list = None                          # [x, y]，含义=引脚质心
+    rotate: int = 0                                # 符号旋转角度，目前只支持 0 / 180
+    value_text: str = None                         # 图上显示的数值字符串（不改模型）
 
     def __post_init__(self):
         # JSON 里对象的键一定是字符串，读回来要转成 int，否则 set_params 会失效
@@ -149,6 +151,22 @@ class Component:
 class Net:
     name: str
     pins: list = field(default_factory=list)       # ["V1.+", "R1.1"]
+    route: str = "hv"                              # 导线折线顺序，见下
+    star: str = None                               # 星型连线的中心引脚（如 "GND1.1"）
+    routes: dict = None                            # {"R1.1": [[x,y],...]} 星型连线的折点
+    tap: bool = False                              # 两点直线时在正中插一个共线折点（给探针落点）
+
+    # `route` 是**纯几何**提示，不影响连通性：
+    #   "hv" 先水平后竖直（默认；v0.1~v0.10 全部电路都是这个，不能改）
+    #   "vh" 先竖直后水平（v0.11.0 分叉树布局用，理由见 msbuild.Assembler.wire）
+    # 老 IR JSON 里没有这个键，读回来就是默认值，所以格式版本号不用动。
+    #
+    # `star` 同理：给一个引脚 token 时，该网络改成"其余引脚各连一条线到它"，
+    # 而不是首尾相接。地网在分叉树里必须星型（理由见 msbuild.Assembler.connect）。
+    #
+    # `routes` 是 star 的补充：{引脚 token: [[x, y], ...]}，给某几条星型连线
+    # 指定折点。分叉电路里源被自己的符号挡着，L 形绕不过去，只能由布局器
+    # 指定"先横出去、沿竖直总线上下、再横进支路"。同样是纯几何字段。
 
     def refs(self):
         """拆成 [(refdes, pin), ...]。"""
@@ -199,12 +217,28 @@ class CircuitIR:
                    probes=probes, simulation=sim,
                    version=int(d.get("version") or IR_VERSION))
 
+    # v0.11.0 新增的字段：取默认值时不写进 JSON。
+    # 理由有二 ——
+    #   1. 老 IR 文件（examples/*.ir.json、out/ 里已入库的证据）读进来再存回去
+    #      必须逐字节不变，否则 test_nl2ir 的"语义完全一致"会误报；
+    #   2. 这些字段绝大多数电路用不到，写出来只是噪音。
+    # 读回来时由 dataclass 的默认值自动补齐，所以格式版本号不用动。
+    _COMP_OMIT = {"rotate": 0, "value_text": None}
+    _NET_OMIT = {"route": "hv", "star": None, "routes": None, "tap": False}
+
     def to_dict(self):
         d = asdict(self)
         # params 的键在 JSON 里必须是字符串；读回来由 Component.__post_init__ 转回 int
         for c in d["components"]:
             if c.get("params"):
                 c["params"] = {str(k): v for k, v in c["params"].items()}
+            for k, v in self._COMP_OMIT.items():
+                if c.get(k) == v:
+                    c.pop(k, None)
+        for n in d["nets"]:
+            for k, v in self._NET_OMIT.items():
+                if n.get(k) == v:
+                    n.pop(k, None)
         return d
 
     # ---------- 文件 ----------
@@ -322,6 +356,16 @@ class CircuitIR:
             if len(net.pins) < 2:
                 errs.append("%s: 只有 %d 个引脚，至少要 2 个"
                             % (tag, len(net.pins)))
+
+            if getattr(net, "route", "hv") not in ("hv", "vh"):
+                errs.append("%s: route=%r 不支持（只有 'hv' / 'vh'）"
+                            % (tag, net.route))
+            if getattr(net, "star", None) and net.star not in net.pins:
+                errs.append("%s: star=%r 必须是本网络自己的引脚之一"
+                            % (tag, net.star))
+            for tok in (getattr(net, "routes", None) or {}):
+                if tok not in net.pins:
+                    errs.append("%s: routes 的键 %r 不是本网络的引脚" % (tag, tok))
 
             for tok in net.pins:
                 ref, sep, pin = str(tok).partition(".")

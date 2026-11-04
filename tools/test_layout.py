@@ -273,7 +273,7 @@ def main():
           "%d/%d" % (t.n_series, t.n_shunt))
 
     # ---------------------------------------------------------------- 2
-    print("\n[2] 拒绝类：不支持的拓扑必须说清原因 + 下一步")
+    print("\n[2] 分叉树（v0.11.0）：一个节点两条主干")
     fork = build("fork",
                  [("V1", AC, 1.0), ("R1", R, 1000.0), ("R3", R, 1000.0),
                   ("C1", C, 1e-6), ("C2", C, 1e-6), ("GND1", G, None)],
@@ -281,8 +281,53 @@ def main():
                   ("n1", ["R1.2", "C1.1"]),
                   ("n2", ["R3.2", "C2.1"]),
                   ("0", ["C1.2", "C2.2", "V1.2", "GND1.1"])])
-    expect_err("一个节点两条主干 -> fork", lambda: L.analyze(fork),
-               "LAYOUT_UNSUPPORTED", "fork", "单主干")
+    tf = L.analyze(fork)
+    check("两条主干 -> parallel_branch（不再是拒绝）",
+          tf.kind == "parallel_branch", tf.kind)
+    check("  认出 2 条通路", len(tf.paths()) == 2, str(tf.paths()))
+    check("  2 个串联 / 2 个到地", (tf.n_series, tf.n_shunt) == (2, 2),
+          "%d/%d" % (tf.n_series, tf.n_shunt))
+    check("  分叉点在 in，支路是 R1/R3",
+          tf.forks() == [{"net": "in", "branches": ["R1", "R3"]}],
+          str(tf.forks()))
+    check("  树深 = 1", tf.depth == 1, str(tf.depth))
+
+    pf = L.plan(tf)
+    check("  每个元件都有坐标",
+          set(pf) == {"V1", "R1", "R3", "C1", "C2", "GND1"},
+          str(sorted(pf)))
+    check("  两条支路并排（x 不同）",
+          pf["R1"][0] != pf["R3"][0], "%s vs %s" % (pf["R1"], pf["R3"]))
+    check("  两条支路同一层（y 相同）",
+          pf["R1"][1] == pf["R3"][1], str(pf["R1"][1]))
+    check("  同一条支路上的元件同列（x 相同）",
+          pf["R1"][0] == pf["C1"][0], "%s vs %s" % (pf["R1"], pf["C1"]))
+    check("  到地元件在串联元件下方（y 更大）",
+          pf["C1"][1] > pf["R1"][1], "%s vs %s" % (pf["R1"], pf["C1"]))
+    check("  源在根节点左边、同一行",
+          pf["V1"][0] < pf["R1"][0]
+          and abs(pf["V1"][1] - pf["R1"][1] + 110.0) < 1e-6,
+          str(pf["V1"]))
+    check("  地只有一个，在最下方",
+          pf["GND1"][1] > max(pf[c][1] for c in ("R1", "R3", "C1", "C2")),
+          str(pf["GND1"]))
+    check("  所有元件坐标互不重合",
+          len({tuple(v) for v in pf.values()}) == len(pf),
+          str(sorted(pf.items())))
+
+    # 走线提示：分叉网络星型 + 折点，直线网络打 tap
+    import layout_tree
+    h = layout_tree.wiring_hints(tf)
+    check("  in 网星型接到 V1.1",
+          h.get("in", {}).get("star") == "V1.1", str(h.get("in")))
+    check("  in 网给两条支路各一个折点",
+          len((h.get("in") or {}).get("routes") or {}) == 2, str(h.get("in")))
+    check("  n1 是两点直线 -> tap（给探针留落点）",
+          h.get("n1", {}).get("tap") is True, str(h.get("n1")))
+    check("  地网星型接到 GND1.1",
+          h.get("0", {}).get("star") == "GND1.1", str(h.get("0")))
+
+    print("\n[2b] 拒绝类：不支持的拓扑必须说清原因 + 下一步")
 
     # v0.10.0 放开到 2 个，3 个仍然拒绝
     par3 = build("parallel3",

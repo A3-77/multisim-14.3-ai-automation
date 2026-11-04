@@ -405,6 +405,25 @@ def chart_v100():
           svg(880, 340, body, "v0.10.0 并联到地波形"))
 
 
+def chart_v110():
+    """v0.11.0：一个节点分出两条支路，各自跑自己的 RC。"""
+    _, t, ch = read_csv("out/agent_v11/fork/case_a_fork_rc_pair.csv")
+    keep = [i for i, ti in enumerate(t) if ti <= 0.0032]
+    t = [t[i] for i in keep]
+    ch = [[c[i] for i in keep] for c in ch]
+    t, s = thin(t, [ch[0], ch[1], ch[2]], 900)
+
+    body = [text(24, 30, "v0.11.0 · 一个节点分两条支路：R1(1k)+C1 与 R2(2k)+C2 各自跑自己的低通", 15, INK, "600"),
+            text(24, 50, "V1 1V/1kHz 同时喂两条支路。实测 支路1 = 0.70587∠−45.10°（理论 0.70711∠−45.00°），支路2 = 0.44596∠−63.51°（理论 0.44721∠−63.43°）", 11.5, MUTED),
+            text(24, 68, "关键：两条读数不同。若分叉被短成一条、或某条支路被漏掉，两个输出会变成同一个数 —— 这是最容易看出来的失败模式", 11.5, "#b45309")]
+    body += panel(24, 80, 832, 250, t, s, [C_IN, C_OUT, "#059669"],
+                  ["V(输入)", "V(n1) 支路1", "V(n2) 支路2"],
+                  0.0032, -1.05, 1.05, xlabel="时间 (ms)", ylabel="电压 (V)",
+                  xunit=1e3)
+    write("v0.11.0-fork-branches.svg",
+          svg(880, 340, body, "v0.11.0 分叉支路波形"))
+
+
 if __name__ == "__main__":
     print("生成 SVG：")
     chart_pipeline()
@@ -417,3 +436,4 @@ if __name__ == "__main__":
     chart_v080()
     chart_v090()
     chart_v100()
+    chart_v110()

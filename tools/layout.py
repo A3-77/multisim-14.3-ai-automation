@@ -309,6 +309,42 @@ def _unsupported(reason, message, hint, **context):
     return LayoutError("LAYOUT_UNSUPPORTED", message, hint, **ctx)
 
 
+def _has_fork(ir, src_ref, gnd_ref, gnd_net, in_net):
+    """有没有哪个节点分出了 2 条以上"不是到地"的主干。
+
+    判据不能只数"这个网络上挂了几个非地元件" —— 单主干的**中间节点本来
+    就有 2 个**（一个从上游进来、一个往下去）。所以：
+
+        普通节点  入 1 + 出 n    -> 出 ≥ 2 才算分叉，即非地元件数 ≥ 3
+        根节点    入 0 + 出 n    -> 出 ≥ 2 才算分叉，即非地元件数 ≥ 2
+
+    只看两端元件（`_two_pin_other` 对多引脚返回 None，直接跳过）——
+    运放 / 555 不该把电路误判成树形，它们走的是另一条布局路径。
+
+    这个扫描刻意做在 `analyze()` 主循环**之前**：一旦判定是分叉，整棵树
+    交给 `layout_tree`，单主干那条路径一行都不执行。
+    """
+    skip = {src_ref, gnd_ref}
+    for net in ir.nets:
+        n = 0
+        for ref, pin in net.refs():
+            if ref in skip:
+                continue
+            comp = ir.component(ref)
+            if comp is None:
+                continue
+            other = _two_pin_other(comp, pin)
+            if other is None:
+                continue
+            onet = _pin_net(ir, ref, other)
+            if onet is not None and onet != gnd_net:
+                n += 1
+        limit = 1 if net.name == in_net else 2
+        if n > limit:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # 第一步：拓扑分析（不认识坐标）
 # ---------------------------------------------------------------------------
@@ -361,6 +397,13 @@ def analyze(ir):
             "P2 假设单电源：负极必须和 GROUND 同网络。"
             "先 connect [%s.-, %s.1]。" % (src.refdes, gnd.refdes),
             refdes=src.refdes, neg_net=neg_net, gnd_net=gnd_net)
+
+    # v0.11.0：先探一次"有没有分叉"。有就整棵树交给 layout_tree ——
+    # 下面这段单主干循环的坐标被 v0.1~v0.10 的 5 次真机验收固定住了，
+    # 不能为了支持分叉去动它（哪怕只是加个 if）。
+    if _has_fork(ir, src.refdes, gnd.refdes, gnd_net, in_net):
+        import layout_tree
+        return layout_tree.analyze_tree(ir, src, gnd, in_net, gnd_net)
 
     visited = {src.refdes, gnd.refdes}
     stages = []
@@ -596,7 +639,14 @@ def plan(topology):
     有模板的拓扑走模板表；其余（v0.1~v0.8 验证过的 6 类）走下面这段通用规则 ——
     **两条路径算出来的坐标必须一致时才能合并，现在刻意不合并**，因为通用规则
     的输出已经被 3 次真机验收固定住了，不能顺手改。
+
+    树形拓扑（v0.11.0）走第三条路：`layout_tree.plan_tree()`。用 `root` 属性
+    区分，而不是 isinstance —— 这样 layout_tree 不需要反向 import layout。
     """
+    if getattr(topology, "root", None) is not None:
+        import layout_tree
+        return layout_tree.plan_tree(topology)
+
     tpl = KIND_TEMPLATES.get(topology.kind)
     if tpl is not None:
         return _plan_from_template(topology, tpl)

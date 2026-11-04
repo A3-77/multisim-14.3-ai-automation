@@ -158,6 +158,23 @@ def compile_ir(src, out_path, verbose=True):
         ciid, ports = a.add_part(comp.family, comp.part, ms_refdes,
                                  value=comp.value, x=x, y=y,
                                  params=comp.params or None, **extra)
+
+        # 符号朝向。必须在**画导线之前**转 —— 旋转会互换两个引脚的位置，
+        # 转晚了导线就接到旧位置上去了。目前只支持 180°（极性元件反接用）。
+        rot = int(getattr(comp, "rotate", 0) or 0) % 360
+        if rot == 180:
+            if not a.c.rotate180(ciid):
+                raise CompileError("%s: 符号旋转失败（找不到绘图对象）" % comp.refdes)
+        elif rot:
+            raise CompileError("%s: 目前只支持 rotate=0 或 180（收到 %d）"
+                               % (comp.refdes, rot))
+
+        # 图上显示的数值字符串。只改显示文本，**不动 SPICE 模型** ——
+        # 作业图里写 02DZ4.7、元件库只有 1N4734A 时用它对齐标注。
+        vt = getattr(comp, "value_text", None)
+        if vt:
+            a.c.set_value_text(ciid, vt)
+
         ciid_of[comp.refdes] = ciid
         ports_of[comp.refdes] = {name for _pid, name in ports}
         report["components"].append({
@@ -188,7 +205,30 @@ def compile_ir(src, out_path, verbose=True):
         if len(members) < 2:
             raise CompileError("网络 %r 只有 %d 个引脚，至少要 2 个"
                                % (net.name, len(members)))
-        node_id = a.connect(members, name=net.name)
+        star_idx = None
+        star = getattr(net, "star", None)
+        if star:
+            try:
+                star_idx = list(net.pins).index(star)
+            except ValueError:
+                raise CompileError(
+                    "网络 %r 的 star=%r 不是本网络的引脚（%s）"
+                    % (net.name, star, ", ".join(net.pins)))
+        routes_idx = None
+        routes = getattr(net, "routes", None) or {}
+        if routes:
+            pins = list(net.pins)
+            routes_idx = {}
+            for tok, mids in routes.items():
+                if tok not in pins:
+                    raise CompileError(
+                        "网络 %r 的 routes 键 %r 不是本网络的引脚（%s）"
+                        % (net.name, tok, ", ".join(pins)))
+                routes_idx[pins.index(tok)] = mids
+        node_id = a.connect(members, name=net.name,
+                            route=getattr(net, "route", "hv"), star=star_idx,
+                            routes=routes_idx,
+                            tap=bool(getattr(net, "tap", False)))
         node_of[net.name] = node_id
         report["nets"].append({"name": net.name, "node": node_id,
                                "pins": list(net.pins)})

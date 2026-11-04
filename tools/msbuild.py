@@ -798,8 +798,26 @@ class Assembler:
         return it
 
     # ---------- 连线 ----------
-    def connect(self, ports, name=""):
-        """ports: [(元件CiID, 引脚名), ...]，建一个节点并把相邻引脚用导线串起来。"""
+    def connect(self, ports, name="", route="hv", star=None, routes=None,
+                tap=False):
+        """ports: [(元件CiID, 引脚名), ...]，建一个节点并把引脚用导线连起来。
+
+        `route` 原样传给每一段导线（见 `wire()`）；分叉树布局传 "vh"。
+
+        `star` 给一个端口下标时改成**星型**：其余每个端口各画一条线到该端口，
+        而不是首尾相接地串成链。地网必须这样 —— 链式会让"上一条支路的地线"
+        沿着下一条支路的元件往上爬，穿进它的符号框（v0.11.0 实测）。
+
+        `routes` 给 {端口下标: [[x, y], ...]} 时，那几条星型连线按给定折点画
+        （走 `wire_via`）。分叉电路里源被自己的符号挡在中间，L 形绕不开，
+        必须由布局器指定"先横出去、沿总线上下、再横进去"。
+
+        `tap=True` 时，如果这条网络正好是**两点直线**，在正中插一个共线折点。
+        探针只能落在导线顶点上（`add_probe_ext` 的坐标必须来自
+        `net_vertices()`），两点直线只有两个顶点、都在引脚上，探针无处可落 ——
+        真机实测的后果是**整条通道消失**。插一个共线点后顶点变成 3 个，
+        看起来仍是直线。只在树形布局里用，老拓扑的走线一个字节不动。
+        """
         node_id = self.new_id()
         item = ET.SubElement(self.els, "Item")
         item.set("CiID", node_id)
@@ -828,9 +846,31 @@ class Assembler:
 
         self._append_ref(self.circuit_inner, "Nodes", node_id)
 
-        # 相邻引脚之间画导线
-        for i in range(len(resolved) - 1):
-            self.wire(node_id, resolved[i], resolved[i + 1])
+        # 相邻引脚之间画导线（给了 star 就改成星型）
+        if star is not None:
+            hub = resolved[star]
+            for i, p in enumerate(resolved):
+                if i == star:
+                    continue
+                mids = (routes or {}).get(i)
+                if mids:
+                    self.wire_via(node_id, p, hub, mids)
+                else:
+                    self.wire(node_id, p, hub, route=route)
+        else:
+            straight = False
+            if tap and len(resolved) == 2:
+                pa = self.c.pin_info(resolved[0][0]).get(resolved[0][1])
+                pb = self.c.pin_info(resolved[1][0]).get(resolved[1][1])
+                if pa and pb:
+                    (x1, y1), (x2, y2) = pa["xy"], pb["xy"]
+                    straight = (abs(x1 - x2) < 0.5 or abs(y1 - y2) < 0.5)
+                    if straight:
+                        mid = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+                        self.wire_via(node_id, resolved[0], resolved[1], [mid])
+            if not straight:
+                for i in range(len(resolved) - 1):
+                    self.wire(node_id, resolved[i], resolved[i + 1], route=route)
         return node_id
 
     def _node_text(self, node_id, x, y):
@@ -886,8 +926,19 @@ class Assembler:
             ref.set("Class", "CODNodeTextComp")
         return tid
 
-    def wire(self, node_id, a, b, color="0"):
-        """在两个引脚之间画一条正交导线。"""
+    def wire(self, node_id, a, b, color="0", route="hv"):
+        """在两个引脚之间画一条正交导线。
+
+        `route` 决定两段折线的先后：
+
+            "hv"  先水平后竖直（默认，v0.1 以来的行为，**不能改**）
+            "vh"  先竖直后水平（v0.11.0 为分叉树布局新增）
+
+        为什么需要 "vh"：分叉点上，父节点要连到上下不同行的支路。若用 "hv"，
+        竖直段落在目标元件的 x 上 —— 当支路数为奇数时，中间那条支路的元件
+        正好也在那个 x，**竖直段的起点会压在它的引脚上**，两条不同网络就短接了。
+        改成 "vh" 后竖直段落在父节点自己的 x 上，那里只有父节点的引脚。
+        """
         pa = self.c.pin_info(a[0]).get(a[1])
         pb = self.c.pin_info(b[0]).get(b[1])
         if not pa or not pb:
@@ -895,9 +946,30 @@ class Assembler:
         (x1, y1), (x2, y2) = pa["xy"], pb["xy"]
         if abs(x1 - x2) < 0.5 or abs(y1 - y2) < 0.5:
             pts = [(x1, y1), (x2, y2)]
+        elif route == "vh":
+            pts = [(x1, y1), (x1, y2), (x2, y2)]
         else:
             pts = [(x1, y1), (x2, y1), (x2, y2)]
+        return self._emit_link(node_id, pa, pb, pts, color)
 
+    def wire_via(self, node_id, a, b, mids, color="0"):
+        """沿给定折点从引脚 a 画到引脚 b（v0.11.0）。
+
+        两段折线（L 形）不够用时才需要它：分叉电路里，源要同时连到上方和
+        下方的支路，而源符号自己挡在中间 —— 只能先横出去、沿一条竖直总线
+        上下走、再横进支路。折点由布局器算，这里只负责画。
+
+        **不做正交性检查**：折点是布局器给的，它比这里更清楚几何关系。
+        """
+        pa = self.c.pin_info(a[0]).get(a[1])
+        pb = self.c.pin_info(b[0]).get(b[1])
+        if not pa or not pb:
+            return None
+        pts = [tuple(pa["xy"])] + [tuple(p) for p in mids] + [tuple(pb["xy"])]
+        return self._emit_link(node_id, pa, pb, pts, color)
+
+    def _emit_link(self, node_id, pa, pb, pts, color="0"):
+        """把一条折线写成 CIITLinkComp（wire / wire_via 共用）。"""
         item = ET.SubElement(self.objs, "Item")
         item.set("ID", self.new_id())
         item.set("Class", "CIITLinkComp")

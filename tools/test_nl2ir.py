@@ -36,13 +36,21 @@ def check(name, cond, detail=""):
 
 
 def canon(d):
-    """语义等价比较：去掉 None / 空 dict / 空 list / name，键顺序无关。"""
+    """语义等价比较：去掉 None / 空 dict / 空 list / name，键顺序无关。
+
+    v0.11.0 起还要去掉 `route` / `star` / `routes` / `tap`：它们是**纯几何**的
+    走线提示（先横后竖 / 地网星型 / 折点 / 探针落点），不影响任何电气语义。
+    旧 IR 文件里没有这几个键，读回来是默认值 —— 如果参与比较，"解析结果和
+    手写 IR 一致"这条断言会因为一个默认值而失败，那是假警报。
+    """
     d = copy.deepcopy(d)
+    GEOM = ("route", "star", "routes", "tap")
 
     def clean(o):
         if isinstance(o, dict):
             return {k: clean(v) for k, v in o.items()
-                    if v is not None and v != {} and v != [] and k != "name"}
+                    if v is not None and v != {} and v != [] and k != "name"
+                    and k not in GEOM}
         if isinstance(o, list):
             return [clean(x) for x in o]
         return o

@@ -1,0 +1,286 @@
+{
+  "version": "v0.11.0",
+  "case_a": {
+    "circuit_id": "c-761ed3af28",
+    "sim_id": "s-48130c8ae1",
+    "recompute": {
+      "P_n1": {
+        "n": 1600,
+        "vin_amp": 0.9967904946412598,
+        "vout_amp": 0.7036023471211528,
+        "gain": 0.7058678337160265,
+        "phase_deg": -45.100404458312276,
+        "t_range": [
+          0.002,
+          0.009995
+        ],
+        "skipped_periods": 2,
+        "full_window": {
+          "n": 2000,
+          "vin_amp": 0.9967908600779922,
+          "vout_amp": 0.7034942561971678,
+          "gain": 0.705759136015878,
+          "phase_deg": -44.16801845801644
+        }
+      },
+      "P_n2": {
+        "n": 1600,
+        "vin_amp": 0.9967904946412598,
+        "vout_amp": 0.4445300788154426,
+        "gain": 0.44596139430024034,
+        "phase_deg": -63.51175338290384,
+        "t_range": [
+          0.002,
+          0.009995
+        ],
+        "skipped_periods": 2,
+        "full_window": {
+          "n": 2000,
+          "vin_amp": 0.9967908600779922,
+          "vout_amp": 0.44449012674505956,
+          "gain": 0.445921150109945,
+          "phase_deg": -62.037928239111885
+        }
+      }
+    },
+    "theory": {
+      "kind": "ac_tree",
+      "freq": 1000.0,
+      "topology": "parallel_branch",
+      "n_paths": 2,
+      "paths": [
+        {
+          "elements": [
+            "R1",
+            "C1"
+          ],
+          "output_net": "n1",
+          "gain": 0.7071067811865476,
+          "phase_deg": -45.0
+        },
+        {
+          "elements": [
+            "R2",
+            "C2"
+          ],
+          "output_net": "n2",
+          "gain": 0.447213595499958,
+          "phase_deg": -63.43494882292201
+        }
+      ],
+      "gain": null,
+      "phase_deg": null,
+      "z_in": 877.0580193070293
+    },
+    "ms14": "out\\agent_v11\\fork\\case_a_fork_rc_pair.ms14",
+    "csv": "out\\agent_v11\\fork\\case_a_fork_rc_pair.csv"
+  },
+  "case_b": {
+    "circuit_id": "c-4f27756d38",
+    "sim_id": "s-a5247a11bd",
+    "recompute": {
+      "P_n1": {
+        "n": 1,
+        "mean": 2.5,
+        "min": 2.5,
+        "max": 2.5
+      },
+      "P_n2": {
+        "n": 1,
+        "mean": 1.25,
+        "min": 1.25,
+        "max": 1.25
+      },
+      "P_n3": {
+        "n": 1,
+        "mean": 1.25,
+        "min": 1.25,
+        "max": 1.25
+      }
+    },
+    "ms14": "out\\agent_v11\\fork\\case_b_fork_dc_ladder.ms14",
+    "csv": "out\\agent_v11\\fork\\case_b_fork_dc_ladder.csv"
+  },
+  "calls": [
+    {
+      "tool": "create_circuit",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.24
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "simulate",
+      "ok": true,
+      "elapsed": 24.8
+    },
+    {
+      "tool": "get_waveform",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "measure",
+      "ok": true,
+      "elapsed": 0.28
+    },
+    {
+      "tool": "create_circuit",
+      "ok": true,
+      "elapsed": 0.23
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.26
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.37
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.24
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.37
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_component",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.2
+    },
+    {
+      "tool": "connect",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.22
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "add_probe",
+      "ok": true,
+      "elapsed": 0.21
+    },
+    {
+      "tool": "simulate",
+      "ok": true,
+      "elapsed": 25.87
+    },
+    {
+      "tool": "get_waveform",
+      "ok": true,
+      "elapsed": 0.22
+    }
+  ],
+  "n_calls": 35,
+  "n_errors": 0,
+  "total_s": 58.3,
+  "fails": [],
+  "pass": true
+}

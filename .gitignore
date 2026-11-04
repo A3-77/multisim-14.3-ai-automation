@@ -102,3 +102,9 @@ out/agent_v08/**/.inject-*.done
 !out/agent_v10/
 !out/agent_v10/**
 out/agent_v10/**/server.log
+
+# v0.11.0 分叉树验收证据（README 与 docs/charts/v0.11.0-fork-branches.svg 直接引用）
+# acceptance.json / trace / 波形 CSV / 验收电路 .ms14 全部入库，只有 server.log 是运行产物
+!out/agent_v11/
+!out/agent_v11/**
+out/agent_v11/**/server.log

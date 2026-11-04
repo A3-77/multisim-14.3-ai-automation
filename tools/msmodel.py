@@ -323,6 +323,61 @@ class Circuit:
                 el.set("Transformer-M21", "%g." % (_flt(y) + dy))
         return True
 
+    def rotate180(self, ciid, cx=None, cy=None):
+        """把元件的**符号**绕 (cx, cy) 旋转 180°（电气连接点跟着一起转）。
+
+        为什么需要：稳压管、二极管这类**有极性**的两脚元件，符号朝向是固定的。
+        两个稳压管要背靠背反接串联，其中一个必须画成反的 —— 只改"接到哪个引脚"
+        电气上是对的，但图上两个箭头同向，交作业时看着就是错的。
+
+        变换矩阵的语义（实测，见 tools/hw_geom.py）：
+            子对象存的是**相对自己 M20/M21 的局部坐标**，
+            最终图纸坐标 = M00*lx + M10*ly + M20 , M01*lx + M11*ly + M21
+        所以绕 (cx, cy) 转 180°：
+            M00 = M11 = -1，M01 = M10 = 0
+            M20/M21 = 2c - 原值
+        局部点 (lx, ly) 落点 = -lx + 2c - x = 2c - (x+lx) —— 正好是镜像，成立。
+
+        cx/cy 默认取**引脚包围盒中心**：两脚元件转完引脚位置不变，只是 A/K 互换，
+        所以已经画好的导线不用动。
+
+        三个例外（都是踩过的坑）：
+          * `CIITSymbolComp` 根节点必须保持单位矩阵（子对象已是图纸绝对坐标）；
+          * `CIITPinConnectorComp` 是引脚符号里的局部连接点，矩阵恒为恒等，
+            动了它电气连接点会整体偏移（见 translate 的注释）；
+          * 文字（SymText*）只挪位置、不翻矩阵，否则字会倒过来。
+        """
+        item = self.symbol_of(ciid)
+        if item is None:
+            return False
+        if cx is None or cy is None:
+            pins = [v["xy"] for v in self.pin_info(ciid).values() if v.get("xy")]
+            if not pins:
+                return False
+            xs = [p[0] for p in pins]
+            ys = [p[1] for p in pins]
+            cx = (min(xs) + max(xs)) / 2.0 if cx is None else cx
+            cy = (min(ys) + max(ys)) / 2.0 if cy is None else cy
+        root = list(item)[0] if len(item) else None
+        for el in item.iter():
+            if el is root or el.tag == "CIITPinConnectorComp":
+                continue
+            # 位号/数值文字**整个跳过**：只翻几何。文字跟着翻会倒着写，
+            # 只挪位置又会跑到符号另一边（实测 D2 的 "1N4734A" 飞到了 RL 上），
+            # 干脆原地不动 —— 两个稳压管的标注就都规规矩矩待在左边。
+            if "SymText" in el.tag:
+                continue
+            x, y = el.get("Transformer-M20"), el.get("Transformer-M21")
+            if x is None or y is None:
+                continue
+            el.set("Transformer-M20", "%g." % (2 * cx - _flt(x)))
+            el.set("Transformer-M21", "%g." % (2 * cy - _flt(y)))
+            el.set("Transformer-M00", "-1.")
+            el.set("Transformer-M01", "0.")
+            el.set("Transformer-M10", "0.")
+            el.set("Transformer-M11", "-1.")
+        return True
+
     def position(self, ciid):
         item = self.symbol_of(ciid)
         if item is None:
